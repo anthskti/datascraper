@@ -1,24 +1,26 @@
 import asyncio
+import argparse
 import csv
 import logging
 from pathlib import Path
 from yesstyle_scrapper import get_first_product_link, scrape_yesstyle_product
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ── Config ──────────────────────────
 INPUT_CSV = "product_input.csv"
 OUTPUT_CSV = "product_output.csv"
-MAX_WORKERS = 10 # Concurrent Scrapers
+MAX_WORKERS = 5 # Conservative default for lower throttle risk on 100+ runs
 DELAY_BETWEEN_REQUESTS = 5 # Seconds reduces throttle risk
 
 OUTPUT_FIELDS = [
     "name", # From CSV
     "brand", # From CSV
     "category", # Yesstyle_scrapper, breadcrumbs
-    # "skinType",
-    # "country", # TODO
-    # "capacity", # Need to scrap
+    "skinType",
+    "country",
+    "capacity",
     "price", 
     "instructions", # how_to_use 
     # "activeIngredient", # Weird
@@ -29,20 +31,28 @@ OUTPUT_FIELDS = [
     "url", # the get_first_product_link
     "status"
 ]
+
+def _product_key(brand: str, product_name: str) -> str:
+    return f"{brand.strip().lower()}::{product_name.strip().lower()}"
+
 # ── Semaphore-limited scrape task ────
-async def scrape_one(input_data: dict, semaphore: asyncio.Semaphore) -> dict:
+async def scrape_one(input_data: dict, semaphore: asyncio.Semaphore, delay_seconds: float) -> dict:
     async with semaphore:
         brand = input_data["brand"]
         product_name = input_data["product_name"]
         search_query = f"{brand} {product_name}"
         result = {
-            "product_name": product_name,
+            "name":         product_name,
             "brand":        brand,
+            "category":     "N/A",
+            "skinType":     "N/A",
+            "country":      "N/A",
+            "capacity":     "N/A",
             "price":        "N/A",
-            "rating":       "N/A",
-            "images":       "N/A",
-            "how_to_use":   "N/A",
+            "instructions": "N/A",
             "ingredients":  "N/A",
+            "imageUrls":    "N/A",
+            "averageRating":"N/A",
             "url":          "N/A",
             "status":       "failed"     # overwritten on success
         }
@@ -57,25 +67,38 @@ async def scrape_one(input_data: dict, semaphore: asyncio.Semaphore) -> dict:
             data = await scrape_yesstyle_product(url)
 
             result.update({
-                "title":       data.get("title", "N/A"),
-                "price":       data.get("price", "N/A"),
-                "rating":      data.get("rating", "N/A"),
-                "images":      "|".join(data.get("images", [])), # pipe-separated in CSV
-                "how_to_use":  data.get("how_to_use", "N/A"),
-                "ingredients": data.get("ingredients", "N/A"),
-                "status":      "success"
+                "category":      data.get("category", "N/A"),
+                "skinType":      data.get("skinType", "N/A"),
+                "country":       data.get("country", "N/A"),
+                "capacity":      data.get("capacity", "N/A"),
+                "price":         data.get("price", "N/A"),
+                "instructions":  data.get("how_to_use", "N/A"),
+                "ingredients":   data.get("ingredients", "N/A"),
+                "imageUrls":     "|".join(data.get("images", [])), # pipe-separated in CSV
+                "averageRating": data.get("rating", "N/A"),
+                "status":        "success"
             })
 
         except Exception as e:
             logger.error("[%s] Scrape failed: %s", product_name, e)
         
-        await asyncio.sleep(DELAY_BETWEEN_REQUESTS)
+        await asyncio.sleep(delay_seconds)
         return result
     
 # ── Main pipeline ────────────────────
-async def run_pipeline():
-    input_path = Path(INPUT_CSV)
-    
+async def run_pipeline(
+    input_csv: str = INPUT_CSV,
+    output_csv: str = OUTPUT_CSV,
+    max_workers: int = MAX_WORKERS,
+    delay_between_requests: float = DELAY_BETWEEN_REQUESTS,
+):
+    input_path = Path(input_csv)
+    if not input_path.exists():
+        logger.error(
+            "Input file not found: %s. Create it with columns: brand,product_name",
+            input_csv,
+        )
+        return
 
     with open(input_path, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
@@ -87,22 +110,32 @@ async def run_pipeline():
             for row in reader
         ]
 
-    logger.info("Loaded %d products from %s", len(products), INPUT_CSV)
+    logger.info("Loaded %d products from %s", len(products), input_csv)
 
-    scraped = set() # Used so it doesn't double scrap
-    output_path = Path(OUTPUT_CSV)
+    scraped = set() # Used so it doesn't double scrape successful rows
+    output_path = Path(output_csv)
     if output_path.exists():
         with open(output_path, newline="", encoding="utf-8") as f:
             reader = csv.DictReader(f)
-            scraped = {row["product_name"] for row in reader}
+            scraped = {
+                _product_key(row.get("brand", ""), row.get("name", ""))
+                for row in reader
+                if row.get("status") == "success" and row.get("brand") and row.get("name")
+            }
         logger.info("Resuming — %d already scraped, skipping them...", len(scraped))
 
-    remaining = [p for p in products if p not in scraped]
+    remaining = [
+        p for p in products
+        if _product_key(p["brand"], p["product_name"]) not in scraped
+    ]
     logger.info("%d products left to scrape", len(remaining))
+    if not remaining:
+        logger.info("Nothing to scrape. Exiting.")
+        return
 
     # Concurrent Running Limit
-    semaphore = asyncio.Semaphore(MAX_WORKERS)
-    tasks = [scrape_one(prod, semaphore) for prod in remaining]
+    semaphore = asyncio.Semaphore(max_workers)
+    tasks = [scrape_one(prod, semaphore, delay_between_requests) for prod in remaining]
     
     # Open CSV and append
     # Safety for crashing
@@ -122,7 +155,49 @@ async def run_pipeline():
                 "Progress: %d/%d — [%s] %s",
                 completed, len(remaining),
                 row["status"].upper(),
-                row["product_name"]
+                row["name"]
             )
 
-    logger.info("Done. Output saved to %s", OUTPUT_CSV)
+    logger.info("Done. Output saved to %s", output_csv)
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Scrape YesStyle product data from an input CSV."
+    )
+    parser.add_argument(
+        "--input",
+        default=INPUT_CSV,
+        help="Input CSV path (default: product_input.csv)",
+    )
+    parser.add_argument(
+        "--output",
+        default=OUTPUT_CSV,
+        help="Output CSV path (default: product_output.csv)",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=MAX_WORKERS,
+        help=f"Number of concurrent workers (default: {MAX_WORKERS})",
+    )
+    parser.add_argument(
+        "--delay",
+        type=float,
+        default=DELAY_BETWEEN_REQUESTS,
+        help=f"Delay in seconds per task after each scrape (default: {DELAY_BETWEEN_REQUESTS})",
+    )
+    return parser.parse_args()
+
+if __name__ == "__main__":
+    args = _parse_args()
+    workers = max(1, args.workers)
+    delay = max(0.0, args.delay)
+    asyncio.run(
+        run_pipeline(
+            input_csv=args.input,
+            output_csv=args.output,
+            max_workers=workers,
+            delay_between_requests=delay,
+        )
+    )

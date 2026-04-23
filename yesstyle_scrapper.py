@@ -17,6 +17,43 @@ SELECTORS = {
     "product_card": "a[href*='info.html/pid.']",
 }
 
+NAVIGATION_RETRIES = 2
+NAVIGATION_TIMEOUT_MS = 30000
+READY_TIMEOUT_MS = 12000
+
+async def _goto_with_retries(page, url: str, ready_selector: str | None = None) -> bool:
+    """
+    Navigate with retries and wait for a key selector when provided.
+    Returns True if navigation is likely ready for parsing.
+    """
+    for attempt in range(1, NAVIGATION_RETRIES + 1):
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=NAVIGATION_TIMEOUT_MS)
+            if ready_selector:
+                await page.wait_for_selector(ready_selector, timeout=READY_TIMEOUT_MS)
+            return True
+        except PlaywrightTimeoutError:
+            logger.warning(
+                "Timeout loading %s (attempt %d/%d).",
+                url,
+                attempt,
+                NAVIGATION_RETRIES,
+            )
+            if attempt < NAVIGATION_RETRIES:
+                await asyncio.sleep(attempt * 1.5)
+        except Exception as exc:
+            logger.warning(
+                "Navigation error for %s (attempt %d/%d): %s",
+                url,
+                attempt,
+                NAVIGATION_RETRIES,
+                exc,
+            )
+            if attempt < NAVIGATION_RETRIES:
+                await asyncio.sleep(attempt * 1.5)
+
+    return False
+
 async def get_first_product_link(search_query: str) -> str | None:
     """
     Searches YesStyle and returns the URL of the first result. 
@@ -33,10 +70,7 @@ async def get_first_product_link(search_query: str) -> str | None:
         )
         page = await context.new_page()
 
-        try:
-            await page.goto(search_url, wait_until="networkidle", timeout=30000) # 30 seconds 
-        except PlaywrightTimeoutError:
-            logger.warning("Searching page timed out while getting first product link.")
+        await _goto_with_retries(page, search_url, ready_selector=SELECTORS["product_card"])
 
         content = await page.content()
         await browser.close()
@@ -171,23 +205,22 @@ def _extract_rating(soup: BeautifulSoup) -> str:
 
 def _map_to_clearup_category(raw_category: str) -> str:
     category_map = {
-        "cleanser":   "face cleansers",
-        "toner":      "toners",
-        # "essence":    ["essence", "treatment"], essence end up being serums
-        "serum":      "face serums", 
-        "moisturizer":"moisturizers",
-        "sunscreen":  "sunscreens",
+        "cleanser": ["cleanser", "cleansing"],
+        "toner": ["toner"],
+        "serum": ["face serums", "eye serums", "ampoule"],
+        "moisturizer": ["moisturizer", "cream", "lotion", "gel"],
+        "sunscreen": ["sunscreen", "sun cream", "sunblock", "spf"],
     }
 
     raw_lower = raw_category.lower()
     
     for target, keywords in category_map.items():
-        if (raw_lower in keywords):
+        if any(keyword in raw_lower for keyword in keywords):
             return target
 
     return "other"
 
-async def _extract_category(soup: BeautifulSoup) -> str:
+def _extract_category(soup: BeautifulSoup) -> str:
     # Could also use this one.
     # <div class="productDetailPage-module-scss-module__dKBM_W__productInfoBox productDetailPage-module-scss-module__dKBM_W__shippingInfo"><h6>Bestseller Rank<span class="icon icon-angle-right"></span></h6><div class="productDetailPage-module-scss-module__dKBM_W__bestsellersRankWrapper"><span>#2 in <a href="/en/beauty-sunscreens/list.html/bcc.15601_bpt.46">Sunscreens</a></span><span>#4 in <a href="/en/beauty-beauty/list.html/bcc.15478_bpt.46">Beauty</a></span></div></div>
 
@@ -199,21 +232,105 @@ async def _extract_category(soup: BeautifulSoup) -> str:
     
     categories = [i for i in items if i.lower() != "home"]
 
-    if len(categories) >= 2:
-        return _map_to_clearup_category(categories[2])
+    # Some products only expose specific category names (e.g. "Eye Serums")
+    # in deeper breadcrumb levels, so map across the full trail.
+    for category in reversed(categories):
+        mapped = _map_to_clearup_category(category)
+        if mapped != "other":
+            return mapped
     return "other"
 
-async def _extract_skintype(soup: BeautifulSoup) -> str:
-    # TODO
-    return
+def _extract_product_info_map(soup: BeautifulSoup) -> dict[str, str]:
+    """
+    Build a normalized map from the Product Information table.
+    """
+    info_map: dict[str, str] = {}
+    rows = soup.find_all("tr")
+    for row in rows:
+        cells = row.find_all("td")
+        if len(cells) < 2:
+            continue
+        label = cells[0].get_text(" ", strip=True).lower().rstrip(":")
+        value = cells[1].get_text(" ", strip=True)
+        if label and value:
+            info_map[label] = value
+    return info_map
 
-async def _extract_country(soup: BeautifulSoup) -> str:
-    label_td = soup.find("td", string=lambda s: s and "Imported from:" in s)
+def _extract_skintype(soup: BeautifulSoup) -> str:
+    info_map = _extract_product_info_map(soup)
+    if "recommended for" in info_map:
+        return info_map["recommended for"]
 
-    if label_td:
-        value_td=label_td.find_nextsibling("td")
-        if value_td:
-            return value_td.get_text(strip=True)
+    # Fallback for description format like:
+    # <b>Skin types:</b> All skin types
+    for b_tag in soup.find_all("b"):
+        label = b_tag.get_text(" ", strip=True).lower().rstrip(":")
+        if label in ("skin types", "skin type"):
+            # First try immediate text sibling
+            sibling = b_tag.next_sibling
+            if isinstance(sibling, str):
+                value = sibling.strip(" :\n\t")
+                if value:
+                    return value
+
+            # Then try next text node in document order
+            next_text = b_tag.find_next(string=True)
+            if next_text:
+                value = next_text.strip(" :\n\t")
+                if value and value.lower() not in ("skin types", "skin type"):
+                    return value
+
+            # Finally try parent block text with label removed
+            parent = b_tag.parent
+            if parent:
+                parent_text = parent.get_text(" ", strip=True)
+                cleaned = re.sub(r"(?i)^skin types?\s*:\s*", "", parent_text).strip()
+                if cleaned:
+                    return cleaned
+
+    return "N/A"
+
+def _extract_country(soup: BeautifulSoup) -> str:
+    info_map = _extract_product_info_map(soup)
+    if "imported from" in info_map:
+        return info_map["imported from"]
+    return "N/A"
+
+def _extract_capacity(soup: BeautifulSoup) -> str:
+    info_map = _extract_product_info_map(soup)
+    for key in ("volume", "size", "net wt", "capacity", "content"):
+        if key in info_map:
+            return info_map[key]
+
+    # Fallback: option blocks often use labels like "Size:", "Capacity:", etc.
+    for title in soup.select("span[class*='option-title']"):
+        label = title.get_text(" ", strip=True).lower().rstrip(":")
+        if label not in ("size", "volume", "capacity", "net wt", "content"):
+            continue
+
+        # Common pattern: <span class="option-title">Size:</span><span class="option-value">100ml</span>
+        value_el = title.find_next_sibling("span")
+        if value_el:
+            value = value_el.get_text(" ", strip=True)
+            if value:
+                return value
+
+        # If value is inline in the same parent text, remove the label.
+        parent = title.parent
+        if parent:
+            parent_text = parent.get_text(" ", strip=True)
+            cleaned = re.sub(
+                r"(?i)^(size|volume|capacity|net wt|content)\s*:\s*",
+                "",
+                parent_text,
+            ).strip()
+            if cleaned and cleaned.lower() != label:
+                return cleaned
+
+    page_text = soup.get_text(" ", strip=True)
+    match = re.search(r"\b\d+(?:\.\d+)?\s?(?:ml|g|oz|fl oz)\b", page_text, re.IGNORECASE)
+    if match:
+        return match.group(0)
     return "N/A"
 
 
@@ -227,10 +344,13 @@ async def scrape_yesstyle_product(url: str) -> dict:
         )
         page = await context.new_page()
         
-        try:
-            await page.goto(url, wait_until="networkidle", timeout=30000) # 30 seconds
-        except PlaywrightTimeoutError:
-            logger.warning("Product page timed out while parsing the content.")
+        ready = await _goto_with_retries(
+            page,
+            url,
+            ready_selector="span[class*='sellingPrice'], ul[class*='breadcrumbs'], div[role='region']",
+        )
+        if not ready:
+            logger.warning("Product page may be partially loaded; parsing with fallback extraction.")
 
         content = await page.content()
         await browser.close()
@@ -243,11 +363,15 @@ async def scrape_yesstyle_product(url: str) -> dict:
         "how_to_use": "N/A",
         "ingredients":"N/A",
         "category":   "N/A",
-        "country":    "N/A"
+        "skinType":   "N/A",
+        "country":    "N/A",
+        "capacity":   "N/A",
     }
 
     # Price
-    data["price"] = soup.select_one(SELECTORS["price"])
+    price_el = soup.select_one(SELECTORS["price"])
+    if price_el:
+        data["price"] = price_el.get_text(" ", strip=True)
     
     # Rating
     data["rating"] = _extract_rating(soup)
@@ -264,16 +388,21 @@ async def scrape_yesstyle_product(url: str) -> dict:
     # Category
     data["category"] = _extract_category(soup)
 
+    # Skin Type
+    data["skinType"] = _extract_skintype(soup)
+
     # Country
     data["country"] = _extract_country(soup)
-    
+
+    # Capacity
+    data["capacity"] = _extract_capacity(soup)
 
     return data
 
 
 # Entry point 
 async def main():
-    product_name = "SKIN1004 Madagascar Centella Asiatica 100 Ampoule"
+    product_name = "Beauty of Joseon Revive Eye Serum"
     logger.info("Searching for: %s", product_name)
 
     link = await get_first_product_link(product_name)

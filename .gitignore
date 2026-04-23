@@ -1,3 +1,14 @@
-# venv
-/venv
-/venv/*
+# uv: virtual environment
+.venv/
+
+# uv: build artifacts (if using uv build)
+dist/
+
+# uv: optional local-only settings
+.uv/
+
+# pycache
+__pycache__/
+
+# example html file
+joseonofbeauty.html
