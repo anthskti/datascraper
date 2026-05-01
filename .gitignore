@@ -12,3 +12,7 @@ __pycache__/
 
 # example html file
 joseonofbeauty.html
+
+#
+product_output.csv
+product_input.csv

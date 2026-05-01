@@ -95,7 +95,7 @@ async def run_pipeline(
     input_path = Path(input_csv)
     if not input_path.exists():
         logger.error(
-            "Input file not found: %s. Create it with columns: brand,product_name",
+            "Input file not found: %s. Create it with columns: Brand,Name",
             input_csv,
         )
         return
@@ -104,8 +104,8 @@ async def run_pipeline(
         reader = csv.DictReader(f)
         products = [
             {
-                "brand": row["brand"].strip(), 
-                "product_name": row["product_name"].strip()
+                "brand": row["Brand"].strip(), 
+                "product_name": row["Name"].strip()
             } 
             for row in reader
         ]

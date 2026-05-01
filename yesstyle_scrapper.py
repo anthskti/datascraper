@@ -205,11 +205,11 @@ def _extract_rating(soup: BeautifulSoup) -> str:
 
 def _map_to_clearup_category(raw_category: str) -> str:
     category_map = {
-        "cleanser": ["cleanser", "cleansing"],
+        "cleanser": ["cleanser", "cleansing", "face cleansers"],
         "toner": ["toner"],
-        "serum": ["face serums", "eye serums", "ampoule"],
+        "serum": ["face serums", "eye serums", "ampoule", "eye cream", "eye care"],
         "moisturizer": ["moisturizer", "cream", "lotion", "gel"],
-        "sunscreen": ["sunscreen", "sun cream", "sunblock", "spf"],
+        "sunscreen": ["sunscreen", "sun cream", "sunblock", "spf", "sun care"],
     }
 
     raw_lower = raw_category.lower()
