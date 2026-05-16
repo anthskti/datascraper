@@ -17,7 +17,8 @@ DELAY_BETWEEN_REQUESTS = 5 # Seconds reduces throttle risk
 OUTPUT_FIELDS = [
     "name", # From CSV
     "brand", # From CSV
-    "category", # Yesstyle_scrapper, breadcrumbs
+    "category", # Yesstyle_scrapper, name then breadcrumbs
+    "labels",   # category-specific filters (texture, SPF, etc.)
     "skinType",
     "country",
     "capacity",
@@ -45,6 +46,7 @@ async def scrape_one(input_data: dict, semaphore: asyncio.Semaphore, delay_secon
             "name":         product_name,
             "brand":        brand,
             "category":     "N/A",
+            "labels":       "",
             "skinType":     "N/A",
             "country":      "N/A",
             "capacity":     "N/A",
@@ -64,10 +66,11 @@ async def scrape_one(input_data: dict, semaphore: asyncio.Semaphore, delay_secon
                 return result
             
             result["url"] = url
-            data = await scrape_yesstyle_product(url)
+            data = await scrape_yesstyle_product(url, product_name=product_name)
 
             result.update({
                 "category":      data.get("category", "N/A"),
+                "labels":        data.get("labels", ""),
                 "skinType":      data.get("skinType", "N/A"),
                 "country":       data.get("country", "N/A"),
                 "capacity":      data.get("capacity", "N/A"),

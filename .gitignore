@@ -1,6 +1,11 @@
 # uv: virtual environment
 .venv/
 
+# Incomplete Dev Docs and Testing
+extra/
+docs/
+testing/
+
 # uv: build artifacts (if using uv build)
 dist/
 
