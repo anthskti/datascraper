@@ -285,11 +285,7 @@ def _resolve_skin_types_from_raw(raw: str) -> str | None:
         return None
 
     if _is_all_skin_types_text(raw):
-        specific = _extract_skin_types_from_text(raw)
-        if specific and re.search(
-            r"(especially|ideal for|suitable for|perfect for)", raw.lower()
-        ):
-            return _format_skin_types(specific)
+        # "All skin types, especially dry and sensitive" → all types for the DB
         return _format_skin_types(ALL_SKIN_TYPES)
 
     specific = _extract_skin_types_from_text(raw)
@@ -319,28 +315,52 @@ def _skintype_value_after_b_tag(b_tag) -> str | None:
     return None
 
 
-def _extract_skintype_snippet_from_features(soup: BeautifulSoup) -> str | None:
+def _split_skintype_prose_lines(text: str) -> list[str]:
+    """Split marketing copy into sentence-sized chunks for safe skin-type mining."""
+    normalized = re.sub(r"\s+", " ", text.strip())
+    if not normalized:
+        return []
+    return [part.strip() for part in re.split(r"(?<=[.!?])\s+", normalized) if part.strip()]
+
+
+def _is_editor_note_root(root) -> bool:
+    return bool(
+        root.find("h6", class_=lambda c: c and "editor" in str(c).lower())
+    )
+
+
+def _append_unique_snippet(snippets: list[str], value: str | None) -> None:
+    if not value:
+        return
+    cleaned = value.strip()
+    if cleaned and cleaned not in snippets:
+        snippets.append(cleaned)
+
+
+def _extract_structured_skintype_snippets(soup: BeautifulSoup) -> list[str]:
     """
-    Skin types from Features / Benefits only (never Editor's Note).
-    Looks for structured lines like <b>Skin types:</b> All skin types.
+    Formal skin-type fields: product table, <b>Skin types:</b>, Recommended for blocks.
     """
-    for root in marketing_search_roots(soup):
-        if root.find(
-            "h6",
-            class_=lambda c: c and "editor" in str(c).lower(),
-        ) and not root.find(
-            lambda t: t.name in ("h3", "h4")
-            and t.get_text()
-            and "feature" in t.get_text(strip=True).lower()
-        ):
+    snippets: list[str] = []
+
+    info_map = extract_product_info_map(soup)
+    if "recommended for" in info_map:
+        _append_unique_snippet(snippets, info_map["recommended for"])
+
+    search_roots = list(marketing_search_roots(soup))
+    search_roots.append(soup)
+
+    seen_root_ids: set[int] = set()
+    for root in search_roots:
+        root_id = id(root)
+        if root_id in seen_root_ids:
             continue
+        seen_root_ids.add(root_id)
 
         for b_tag in root.find_all("b"):
             label = b_tag.get_text(" ", strip=True).lower().rstrip(":")
             if label in ("skin types", "skin type"):
-                value = _skintype_value_after_b_tag(b_tag)
-                if value:
-                    return value
+                _append_unique_snippet(snippets, _skintype_value_after_b_tag(b_tag))
 
         for tag in root.find_all(["b", "strong"]):
             label = tag.get_text(" ", strip=True).lower().rstrip(":")
@@ -352,10 +372,50 @@ def _extract_skintype_snippet_from_features(soup: BeautifulSoup) -> str | None:
             for inner in container.find_all("b"):
                 inner_label = inner.get_text(" ", strip=True).lower().rstrip(":")
                 if inner_label in ("skin types", "skin type"):
-                    value = _skintype_value_after_b_tag(inner)
-                    if value:
-                        return value
-    return None
+                    _append_unique_snippet(snippets, _skintype_value_after_b_tag(inner))
+
+    return snippets
+
+
+def _iter_editor_skintype_lines(soup: BeautifulSoup):
+    """Editor's Note: one sentence at a time (e.g. Suitable for acne-prone skin)."""
+    for root in marketing_search_roots(soup):
+        if not _is_editor_note_root(root):
+            continue
+        section = root.find("section") or root
+        text = section.get_text(" ", strip=True)
+        text = re.sub(r"(?i)^editor'?s?\s+note\s*:?\s*", "", text).strip()
+        for sentence in _split_skintype_prose_lines(text):
+            yield sentence
+        break
+
+
+def _iter_benefits_skintype_lines(soup: BeautifulSoup):
+    """Features / Benefits bullets (e.g. suitable for acne-prone skin in <li>)."""
+    for b_tag in soup.find_all("b"):
+        label = b_tag.get_text(" ", strip=True).lower().rstrip(":")
+        if "benefit" not in label:
+            continue
+        container = b_tag.find_parent("div") or b_tag.parent
+        if not container:
+            continue
+        for li in container.find_all("li"):
+            line = li.get_text(" ", strip=True)
+            if line:
+                yield line
+        break
+
+
+def _collect_skin_types_from_snippets(snippets: list[str]) -> list[str]:
+    merged: list[str] = []
+    for snippet in snippets:
+        resolved = _resolve_skin_types_from_raw(snippet)
+        if not resolved:
+            continue
+        for skin in resolved.split(", "):
+            if skin and skin not in merged:
+                merged.append(skin)
+    return merged
 
 
 def _extract_sunscreen_spf_labels(text: str) -> list[str]:
@@ -483,38 +543,21 @@ def extract_labels(
     return ""
 
 
-def _extract_skintype_raw_from_page(soup: BeautifulSoup) -> str | None:
-    info_map = extract_product_info_map(soup)
-    if "recommended for" in info_map:
-        return info_map["recommended for"]
-
-    for root in marketing_search_roots(soup):
-        for b_tag in root.find_all("b"):
-            label = b_tag.get_text(" ", strip=True).lower().rstrip(":")
-            if label not in ("skin types", "skin type"):
-                continue
-            value = _skintype_value_after_b_tag(b_tag)
-            if value:
-                return value
-
-    return None
-
-
 def extract_skintype(soup: BeautifulSoup) -> str:
     """
-    1. Product Information table / structured Skin types in Features
-    2. Never Editor's Note or full marketing paragraphs
-
-    "All skin types" expands to the full canonical list when appropriate.
+    1. Structured fields (product table, <b>Skin types:</b>, Recommended for blocks)
+    2. Editor's Note — one sentence at a time
+    3. Features / Benefits list items
+    4. N/A if nothing resolves to a canonical skin type
     """
-    raw = _extract_skintype_raw_from_page(soup)
-    resolved = _resolve_skin_types_from_raw(raw) if raw else None
-    if resolved:
-        return resolved
+    snippets: list[str] = []
+    snippets.extend(_extract_structured_skintype_snippets(soup))
 
-    features_snippet = _extract_skintype_snippet_from_features(soup)
-    resolved = _resolve_skin_types_from_raw(features_snippet) if features_snippet else None
-    if resolved:
-        return resolved
+    for line in _iter_editor_skintype_lines(soup):
+        _append_unique_snippet(snippets, line)
 
-    return "N/A"
+    for line in _iter_benefits_skintype_lines(soup):
+        _append_unique_snippet(snippets, line)
+
+    types = _collect_skin_types_from_snippets(snippets)
+    return _format_skin_types(types) if types else "N/A"

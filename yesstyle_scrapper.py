@@ -47,6 +47,9 @@ USER_AGENT = (
 PDP_READY_SELECTOR = (
     "span[class*='sellingPrice'], ul[class*='breadcrumbs'], div[role='region']"
 )
+VARIANT_DIALOG_SELECTOR = (
+    "#product-options-dialog-content, div[class*='productOptions'][class*='dialogContent']"
+)
 
 
 async def _goto_with_retries(page, url: str, ready_selector: str | None = None) -> bool:
@@ -71,6 +74,34 @@ async def _goto_with_retries(page, url: str, ready_selector: str | None = None) 
             if attempt < NAVIGATION_RETRIES:
                 await asyncio.sleep(attempt * 1.5)
     return False
+
+
+async def _try_reveal_variant_options(page) -> None:
+    """
+    YesStyle often mounts the size dialog only after clicking the variant control.
+    Open it when possible so capacity (infoCol / aria-label) is in the HTML snapshot.
+    """
+    if await page.locator(VARIANT_DIALOG_SELECTOR).count() > 0:
+        return
+
+    triggers = [
+        "button[class*='buyOptions']",
+        "span[class*='option-title']",
+        "[class*='selectedOption']",
+        "button:has-text('ml')",
+        "button:has-text('g')",
+    ]
+    for selector in triggers:
+        locator = page.locator(selector).first
+        try:
+            if await locator.count() == 0 or not await locator.is_visible():
+                continue
+            await locator.click(timeout=3000)
+            await page.wait_for_selector(VARIANT_DIALOG_SELECTOR, timeout=5000)
+            logger.info("Opened variant options via selector: %s", selector)
+            return
+        except Exception:
+            continue
 
 
 @asynccontextmanager
@@ -110,6 +141,7 @@ async def scrape_yesstyle_product(url: str, product_name: str | None = None) -> 
         ready = await _goto_with_retries(page, url, ready_selector=PDP_READY_SELECTOR)
         if not ready:
             logger.warning("Product page may be partially loaded; parsing with fallback extraction.")
+        await _try_reveal_variant_options(page)
         content = await page.content()
 
     soup = BeautifulSoup(content, "html.parser")
@@ -147,13 +179,13 @@ async def scrape_yesstyle_product(url: str, product_name: str | None = None) -> 
     )
     data["skinType"] = extract_skintype(soup)
     data["country"] = extract_country(soup)
-    data["capacity"] = extract_capacity(soup)
+    data["capacity"] = extract_capacity(soup, page_url=url)
 
     return data
 
 
 async def main():
-    product_name = "1025 Dokdo Toner ROUND LAB"
+    product_name = "skin1004 Madagascar Centella Asiatica 100 Ampoule"
     logger.info("Searching for: %s", product_name)
 
     link = await get_first_product_link(product_name)

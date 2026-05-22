@@ -5,9 +5,17 @@ DOM / HTML parsing only — no category, label, or skin-type rules.
 
 import re
 import logging
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString
 
 logger = logging.getLogger(__name__)
+
+# Dropdown "productOptions" for capacity extraction. ex "2025 Version - 200ml" → 200ml
+_CAPACITY_PATTERN = re.compile(
+    r"\b(\d+(?:\.\d+)?\s*(?:ml|g|oz|fl\.?\s*oz))\b",
+    re.IGNORECASE,
+)
+_NUMBERED_STEP_PREFIX = re.compile(r"^\d+\.\s*")
+_NUMBERED_STEP_INLINE = re.compile(r"\s+\d+\.\s+")
 
 
 def classes_include_fragment(classes: object, fragment: str) -> bool:
@@ -110,7 +118,6 @@ def extract_images(soup: BeautifulSoup) -> list:
         images.append(main["src"])
     return images
 
-
 def extract_ingredients(soup: BeautifulSoup) -> str:
     for region in soup.find_all("div", {"role": "region"}):
         content_div = region.find("div", class_=lambda c: c and "accordionContent" in c)
@@ -120,11 +127,36 @@ def extract_ingredients(soup: BeautifulSoup) -> str:
         if not span:
             continue
         text = span.get_text(strip=True)
-        if text.count(",") > 5 and any(
-            term in text for term in ("Water", "Glycerin", "Extract", "Acid")
-        ):
+        if bool(text) and text.count(",") > 5:
             return text
     return "N/A"
+
+
+def _strip_numbered_step_prefix(text: str) -> str:
+    text = _NUMBERED_STEP_PREFIX.sub("", text)
+    text = _NUMBERED_STEP_INLINE.sub(" ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _collect_text_after_how_to_use_heading(b_tag) -> str:
+    """
+    YesStyle often uses numbered plain text after <br>, not <ul><li>.
+    Example: extra/instructionexample.md
+    """
+    parts: list[str] = []
+    for sibling in b_tag.next_siblings:
+        if getattr(sibling, "name", None) == "b":
+            break
+        if isinstance(sibling, NavigableString):
+            text = _strip_numbered_step_prefix(str(sibling))
+        elif getattr(sibling, "name", None) == "br":
+            continue
+        else:
+            text = _strip_numbered_step_prefix(sibling.get_text(" ", strip=True))
+        if text:
+            parts.append(text)
+    joined = " ".join(parts)
+    return _strip_numbered_step_prefix(joined)
 
 
 def extract_how_to_use(soup: BeautifulSoup) -> str:
@@ -143,15 +175,20 @@ def extract_how_to_use(soup: BeautifulSoup) -> str:
         if "how to use" not in b_tag.get_text(strip=True).lower():
             continue
         steps = []
+        # Since Yesstyle has different ways of checking for how to use, we need to check for all possible ways.
         for sibling in b_tag.next_siblings:
-            if sibling.name == "b":
+            if getattr(sibling, "name", None) == "b":
                 break
-            if sibling.name == "li":
+            if getattr(sibling, "name", None) == "li":
                 text = sibling.get_text(strip=True)
                 if text:
                     steps.append(text)
         if steps:
             return " ".join(steps)
+
+        inline = _collect_text_after_how_to_use_heading(b_tag)
+        if inline:
+            return inline
 
     logger.warning("How to Use section not found.")
     return "N/A"
@@ -189,7 +226,78 @@ def extract_country(soup: BeautifulSoup) -> str:
     return info_map.get("imported from", "N/A")
 
 
-def extract_capacity(soup: BeautifulSoup) -> str:
+def _parse_capacity_from_text(text: str) -> str | None:
+    match = _CAPACITY_PATTERN.search(text)
+    if not match:
+        return None
+    return re.sub(r"\s+", "", match.group(1))
+
+
+def _is_variant_header_label(text: str) -> bool:
+    lower = text.lower()
+    return (
+        "usually ships" in lower
+        or lower in ("price", "option", "size", "color")
+        or lower.startswith("option/")
+    )
+
+
+def _capacity_from_variant_label(text: str) -> str | None:
+    if not text or _is_variant_header_label(text):
+        return None
+    return _parse_capacity_from_text(text)
+
+
+def _extract_capacity_from_product_options(soup: BeautifulSoup) -> str | None:
+    """
+    YesStyle size/color picker (modal or inline).
+
+    Reliable sources (see extra/anuaheartleaf.md):
+      - button[aria-label] on variant rows, e.g. aria-label="2025 Version - 200ml"
+      - div[class*='infoCol'] inside option buttons (not the header row)
+    """
+    for button in soup.select("button[aria-label][class*='options']"):
+        capacity = _capacity_from_variant_label(button.get("aria-label", ""))
+        if capacity:
+            return capacity
+    #  Checks productOptions -> infoCol for modal access
+    for button in soup.find_all("button", class_=lambda c: classes_include_fragment(c, "productOptions")):
+        if not classes_include_fragment(button.get("class"), "options"):
+            continue
+        capacity = _capacity_from_variant_label(button.get("aria-label", ""))
+        if capacity:
+            return capacity
+
+    for button in soup.select("button[class*='options']"):
+        info_col = button.find(
+            ["motion", "div"],
+            class_=lambda c: classes_include_fragment(c, "infoCol"),
+        )
+        if not info_col:
+            continue
+        capacity = _capacity_from_variant_label(info_col.get_text(" ", strip=True))
+        if capacity:
+            return capacity
+
+    dialog = soup.select_one(
+        "#product-options-dialog-content, div[class*='dialogContent'][class*='productOptions']"
+    )
+    if dialog:
+        for info_col in dialog.select("motion[class*='infoCol'], div[class*='infoCol']"):
+            capacity = _capacity_from_variant_label(info_col.get_text(" ", strip=True))
+            if capacity:
+                return capacity
+
+    return None
+
+
+def _extract_capacity_from_url(page_url: str | None) -> str | None:
+    if not page_url:
+        return None
+    return _parse_capacity_from_text(page_url)
+
+
+def extract_capacity(soup: BeautifulSoup, page_url: str | None = None) -> str:
     info_map = extract_product_info_map(soup)
     for key in ("volume", "size", "net wt", "capacity", "content"):
         if key in info_map:
@@ -215,6 +323,13 @@ def extract_capacity(soup: BeautifulSoup) -> str:
             if cleaned and cleaned.lower() != label:
                 return cleaned
 
+    from_options = _extract_capacity_from_product_options(soup)
+    if from_options:
+        return from_options
+
+    from_url = _extract_capacity_from_url(page_url)
+    if from_url:
+        return from_url
+
     page_text = soup.get_text(" ", strip=True)
-    match = re.search(r"\b\d+(?:\.\d+)?\s?(?:ml|g|oz|fl oz)\b", page_text, re.IGNORECASE)
-    return match.group(0) if match else "N/A"
+    return _parse_capacity_from_text(page_text) or "N/A"
