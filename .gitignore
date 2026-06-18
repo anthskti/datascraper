@@ -1,6 +1,9 @@
 # uv: virtual environment
 .venv/
 
+# Inputted Data 
+inputs/
+
 # Incomplete Dev Docs and Testing
 extra/
 docs/

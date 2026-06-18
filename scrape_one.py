@@ -15,21 +15,19 @@ MAX_WORKERS = 5 # Conservative default for lower throttle risk on 100+ runs
 DELAY_BETWEEN_REQUESTS = 5 # Seconds reduces throttle risk
 
 OUTPUT_FIELDS = [
-    "name", # From CSV
-    "brand", # From CSV
-    "category", # Yesstyle_scrapper, name then breadcrumbs
-    "labels",   # category-specific filters (texture, SPF, etc.)
+    "name", 
+    "brand", 
+    "category", 
+    "labels",   
     "skinType",
     "country",
     "capacity",
     "price", 
-    "instructions", # how_to_use 
-    # "activeIngredient", # Weird
+    "instructions", 
     "ingredients", 
     "imageUrls", 
     "averageRating",
-    # "reviewCount", # don't add for now.
-    "url", # the get_first_product_link
+    "url", 
     "status"
 ]
 
