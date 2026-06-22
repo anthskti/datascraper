@@ -54,7 +54,7 @@ NAME_CATEGORY_PHRASES: list[tuple[str, tuple[str, ...]]] = [
             "cleanser",
         ),
     ),
-    ("essence", ("essence",)),
+    ("essence", ("facial spray", "face mist", "facial mist", "mist", "essence")),
     ("toner", ("toner",)),
     ("serum", ("ampoule", "serum", "booster")),
     (
@@ -79,7 +79,7 @@ NAME_CATEGORY_PHRASES: list[tuple[str, tuple[str, ...]]] = [
 BREADCRUMB_CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
     "cleanser": ("cleanser", "cleansing", "face cleansers"),
     "toner": ("toner", "exfoliator", "exfoliators"),
-    # "essence": ("essence",), # Doesn't exist
+    "essence": ("mist & essence","face mist", "face mists", "facial mist", "setting spray"),
     "serum": ("face serums", "eye serums", "ampoule", "eye care"),
     "moisturizer": ("moisturizer", "cream", "lotion", "gel", "emulsion"),
     "sunscreen": ("sunscreen", "sun cream", "sunblock", "spf", "sun care"),
@@ -94,7 +94,7 @@ CLEANSER_TEXTURE_KEYWORDS: dict[str, tuple[str, ...]] = {
 }
 
 TONER_BENEFIT_KEYWORDS: dict[str, tuple[str, ...]] = {
-    "hydrating": ("hydrating", "hydration", "moisturizing toner"),
+    "hydrating": ("hydrating", "hydration", "hydrates", "hydrate", "moisturizing toner"),
     "exfoliating": (
         "exfoliating",
         "exfoliation",
@@ -111,7 +111,7 @@ TONER_BENEFIT_KEYWORDS: dict[str, tuple[str, ...]] = {
 }
 
 ESSENCE_EFFECT_KEYWORDS: dict[str, tuple[str, ...]] = {
-    "hydrating": ("hydrating", "hydration", "moisturizing"),
+    "hydrating": ("hydrating", "hydration", "hydrates", "hydrate", "moisturizing"),
     "calming": ("calming", "soothing", "cica", "centella", "mugwort"),
     "brightening": ("brightening", "brighten", "glow", "niacinamide", "vitamin c"),
 }
@@ -149,10 +149,17 @@ MOISTURIZER_TEXTURE_KEYWORDS: dict[str, tuple[str, ...]] = {
 }
 
 MOISTURIZER_FINISH_KEYWORDS: dict[str, tuple[str, ...]] = {
-    "matte": ("matte",),
+    "matte": ("matte", "invisible", "weightless"),
     "natural": ("natural", "natural finish", "natural-looking"),
     "dewy": ("dewy", "glowy"),
-    "glassy": ("glassy", "glass skin"),
+    "glassy": ("glassy", "glass skin", "healthy glow"),
+}
+
+# "What it is" description hints when explicit finish terms are absent.
+DESCRIPTION_FINISH_HINTS: dict[str, tuple[str, ...]] = {
+    "dewy": ("hydrating", "hydration", "hydrates", "hydrate"),
+    "glassy": ("smooth", "glass skin", "healthy glow"),
+    "matte": ("invisible", "matte", "weightless"),
 }
 
 SUNSCREEN_SPF_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -464,12 +471,28 @@ def _pick_first_keyword_label(
     return None
 
 
-def _pick_cleanser_texture(product_name: str, text: str) -> str | None:
+def _pick_cleanser_texture_from_formulation(formulation: str) -> str | None:
+    """Fallback: Sephora Formulation line often says Gel, Foam, etc. on its own."""
+    lower = formulation.lower()
+    for label in CLEANSER_TEXTURE_PRIORITY:
+        if re.search(rf"\b{re.escape(label)}\b", lower):
+            return label
+    return None
+
+
+def _pick_cleanser_texture(
+    product_name: str, text: str, formulation_text: str | None = None
+) -> str | None:
     name_lower = product_name.lower()
     for label in CLEANSER_TEXTURE_PRIORITY:
         if _text_has_any(name_lower, CLEANSER_TEXTURE_KEYWORDS[label]):
             return label
-    return _pick_first_keyword_label(text, CLEANSER_TEXTURE_KEYWORDS, CLEANSER_TEXTURE_PRIORITY)
+    hit = _pick_first_keyword_label(text, CLEANSER_TEXTURE_KEYWORDS, CLEANSER_TEXTURE_PRIORITY)
+    if hit:
+        return hit
+    if formulation_text:
+        return _pick_cleanser_texture_from_formulation(formulation_text)
+    return None
 
 
 def _pick_moisturizer_texture(product_name: str, text: str) -> str:
@@ -483,11 +506,36 @@ def _pick_moisturizer_texture(product_name: str, text: str) -> str:
     return hit or LABEL_NA
 
 
-def _pick_moisturizer_finish(text: str) -> str:
+def _pick_toner_format(product_name: str) -> str:
+    if re.search(r"\bpads?\b", product_name, flags=re.IGNORECASE):
+        return "toner pad"
+    return "liquid toner"
+
+
+def _pick_label_from_text(
+    description_text: str,
+    full_text: str,
+    keyword_map: dict[str, tuple[str, ...]],
+    priority: tuple[str, ...],
+) -> str | None:
+    """Prefer About-the-Product copy, then fall back to the wider lookup text."""
+    return _pick_first_keyword_label(
+        description_text, keyword_map, priority
+    ) or _pick_first_keyword_label(full_text, keyword_map, priority)
+
+
+def _pick_moisturizer_finish(description_text: str, full_text: str) -> str:
     hit = _pick_first_keyword_label(
-        text, MOISTURIZER_FINISH_KEYWORDS, MOISTURIZER_FINISH_PRIORITY
+        full_text, MOISTURIZER_FINISH_KEYWORDS, MOISTURIZER_FINISH_PRIORITY
     )
-    return hit or LABEL_NA
+    if hit:
+        return hit
+
+    for label in MOISTURIZER_FINISH_PRIORITY:
+        if _text_has_any(description_text, DESCRIPTION_FINISH_HINTS.get(label, ())):
+            return label
+
+    return LABEL_NA
 
 
 def _format_label_slots(slots: list[str]) -> str:
@@ -499,22 +547,25 @@ def extract_labels(
     product_name: str,
     marketing_text: str,
     ingredients: str,
+    description_text: str | None = None,
+    formulation_text: str | None = None,
 ) -> str:
     text = _normalize_lookup_text(product_name, marketing_text, ingredients)
+    desc = _normalize_lookup_text(description_text or marketing_text)
 
     if category == "cleanser":
-        hit = _pick_cleanser_texture(product_name, text)
+        hit = _pick_cleanser_texture(product_name, text, formulation_text=formulation_text)
         return hit or ""
 
     elif category == "toner":
-        hit = _pick_first_keyword_label(
-            text, TONER_BENEFIT_KEYWORDS, TONER_BENEFIT_PRIORITY
+        benefit = _pick_label_from_text(
+            desc, text, TONER_BENEFIT_KEYWORDS, TONER_BENEFIT_PRIORITY
         )
-        return hit or ""
+        return _format_label_slots([benefit or LABEL_NA, _pick_toner_format(product_name)])
 
     elif category == "essence":
-        hit = _pick_first_keyword_label(
-            text, ESSENCE_EFFECT_KEYWORDS, ESSENCE_EFFECT_PRIORITY
+        hit = _pick_label_from_text(
+            desc, text, ESSENCE_EFFECT_KEYWORDS, ESSENCE_EFFECT_PRIORITY
         )
         return hit or ""
 
@@ -529,14 +580,12 @@ def extract_labels(
 
     elif category == "moisturizer":
         texture = _pick_moisturizer_texture(product_name, text)
-        finish = _pick_moisturizer_finish(text)
+        finish = _pick_moisturizer_finish(desc, text)
         return _format_label_slots([texture, finish])
 
     elif category == "sunscreen":
         spf = (_extract_sunscreen_spf_labels(text) or [LABEL_NA])[0]
-        finish = _pick_first_keyword_label(
-            text, SUNSCREEN_FINISH_KEYWORDS, MOISTURIZER_FINISH_PRIORITY
-        ) or LABEL_NA
+        finish = _pick_moisturizer_finish(desc, text)
         filter_label = _extract_sunscreen_filter_label(text, ingredients) or LABEL_NA
         return _format_label_slots([spf, finish, filter_label])
 
