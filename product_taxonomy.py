@@ -4,7 +4,14 @@ Pure rules + soup-backed resolvers; DOM helpers live in yesstyle_extractors.
 """
 
 import re
+import sys
+from pathlib import Path
+
 from bs4 import BeautifulSoup
+
+_YESSTYLE = Path(__file__).resolve().parent / "yesstyle"
+if str(_YESSTYLE) not in sys.path:
+    sys.path.insert(0, str(_YESSTYLE))
 
 from yesstyle_extractors import (
     extract_product_info_map,

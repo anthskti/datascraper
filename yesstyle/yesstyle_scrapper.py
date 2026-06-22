@@ -9,11 +9,17 @@ Module layout:
 
 import asyncio
 import logging
+import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 from urllib.parse import quote
 
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
+
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
 from product_taxonomy import extract_category, extract_labels, extract_skintype
 from yesstyle_extractors import (

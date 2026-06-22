@@ -6,12 +6,6 @@ Uses Playwright for JavaScript rendering and BeautifulSoup for HTML parsing.
 Author: Anthony Pham
 Created: February 17, 2026
 Last Updated: February 18, 2026
-
-## Dependencies
-
-    pip install playwright beautifulsoup4
-    playwright install chromium
-
 ## Quick Start
 
     import asyncio

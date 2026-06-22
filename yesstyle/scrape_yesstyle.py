@@ -1,18 +1,27 @@
+"""
+Orchestrator for YesStyle product scraping.
+
+Input:  inputs/yesstyle_input.csv          (Brand, Name)
+Output: outputs/yesstyle_output.csv
+"""
+
 import asyncio
 import argparse
 import csv
 import logging
 from pathlib import Path
+
 from yesstyle_scrapper import get_first_product_link, scrape_yesstyle_product
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ── Config ──────────────────────────
-INPUT_CSV = "product_input.csv"
-OUTPUT_CSV = "product_output.csv"
+_ROOT = Path(__file__).resolve().parent.parent
+INPUT_CSV = _ROOT / "inputs" / "yesstyle_input.csv"
+OUTPUT_CSV = _ROOT / "outputs" / "yesstyle_output.csv"
 MAX_WORKERS = 5 # Conservative default for lower throttle risk on 100+ runs
 DELAY_BETWEEN_REQUESTS = 5 # Seconds reduces throttle risk
+MERCHANT = "Yesstyle"
 
 OUTPUT_FIELDS = [
     "name", 
@@ -28,6 +37,7 @@ OUTPUT_FIELDS = [
     "imageUrls", 
     "averageRating",
     "url", 
+    "merchant",
     "status"
 ]
 
@@ -54,6 +64,7 @@ async def scrape_one(input_data: dict, semaphore: asyncio.Semaphore, delay_secon
             "imageUrls":    "N/A",
             "averageRating":"N/A",
             "url":          "N/A",
+            "merchant":     MERCHANT,
             "status":       "failed"     # overwritten on success
         }
 
@@ -88,20 +99,19 @@ async def scrape_one(input_data: dict, semaphore: asyncio.Semaphore, delay_secon
     
 # ── Main pipeline ────────────────────
 async def run_pipeline(
-    input_csv: str = INPUT_CSV,
-    output_csv: str = OUTPUT_CSV,
+    input_csv: Path = INPUT_CSV,
+    output_csv: Path = OUTPUT_CSV,
     max_workers: int = MAX_WORKERS,
     delay_between_requests: float = DELAY_BETWEEN_REQUESTS,
 ):
-    input_path = Path(input_csv)
-    if not input_path.exists():
+    if not input_csv.exists():
         logger.error(
             "Input file not found: %s. Create it with columns: Brand,Name",
             input_csv,
         )
         return
 
-    with open(input_path, newline="", encoding="utf-8") as f:
+    with open(input_csv, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         products = [
             {
@@ -114,9 +124,9 @@ async def run_pipeline(
     logger.info("Loaded %d products from %s", len(products), input_csv)
 
     scraped = set() # Used so it doesn't double scrape successful rows
-    output_path = Path(output_csv)
-    if output_path.exists():
-        with open(output_path, newline="", encoding="utf-8") as f:
+    output_csv.parent.mkdir(parents=True, exist_ok=True)
+    if output_csv.exists():
+        with open(output_csv, newline="", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             scraped = {
                 _product_key(row.get("brand", ""), row.get("name", ""))
@@ -140,8 +150,8 @@ async def run_pipeline(
     
     # Open CSV and append
     # Safety for crashing
-    write_header = not output_path.exists()
-    with open(output_path, "a", newline="", encoding="utf-8") as f:
+    write_header = not output_csv.exists()
+    with open(output_csv, "a", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=OUTPUT_FIELDS)
         if write_header:
             writer.writeheader()
@@ -168,13 +178,15 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--input",
+        type=Path,
         default=INPUT_CSV,
-        help="Input CSV path (default: product_input.csv)",
+        help=f"Input CSV path (default: {INPUT_CSV})",
     )
     parser.add_argument(
         "--output",
+        type=Path,
         default=OUTPUT_CSV,
-        help="Output CSV path (default: product_output.csv)",
+        help=f"Output CSV path (default: {OUTPUT_CSV})",
     )
     parser.add_argument(
         "--workers",
