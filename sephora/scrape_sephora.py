@@ -18,9 +18,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 _ROOT = Path(__file__).resolve().parent.parent
-INPUT_CSV = _ROOT / "inputs" / "sephora_input.csv"
+INPUT_CSV = _ROOT / "inputs" / "sephora_input2.csv"
 OUTPUT_CSV = _ROOT / "outputs" / "sephora_output.csv"
-MAX_WORKERS = 2
+MAX_WORKERS = 4
 DELAY_BETWEEN_REQUESTS = 8
 MERCHANT = "Sephora"
 

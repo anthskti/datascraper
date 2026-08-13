@@ -39,6 +39,8 @@ ESSENCE_EFFECT_PRIORITY = ("hydrating", "calming", "brightening")
 CLEANSER_TEXTURE_PRIORITY = ("oil", "balm", "foam", "gel", "milk")
 MOISTURIZER_TEXTURE_PRIORITY = ("gel", "cream", "ointment", "lotion", "emulsion")
 MOISTURIZER_FINISH_PRIORITY = ("matte", "natural", "dewy", "glassy")
+EYECARE_CONCERN_PRIORITY = ("puffiness", "dark circles", "fine lines", "brightening", "hydrating")
+EYECARE_FORMAT_PRIORITY = ("patch", "mask", "cream", "serum")
 
 # Max length for a skin-type snippet (longer text is marketing copy, not a skin field).
 _MAX_SKINTYPE_SNIPPET_LEN = 80
@@ -46,6 +48,7 @@ _MAX_SKINTYPE_SNIPPET_LEN = 80
 # Checked in order; first match wins. Longer phrases must come before shorter ones.
 # Tuples since read only.
 NAME_CATEGORY_PHRASES: list[tuple[str, tuple[str, ...]]] = [
+    ("eyecare", ("eye cream", "eye serum", "eye care", "eyecare", "eye patch", "eye mask", "eye roller")),
     ("sunscreen", ("sunscreen", "sun cream", "sunblock", "sun stick", "sun gel", "sun fluid", "uv cream", "sun")),
     (
         "cleanser",
@@ -74,7 +77,6 @@ NAME_CATEGORY_PHRASES: list[tuple[str, tuple[str, ...]]] = [
             "sleeping mask",
             "night cream",
             "day cream",
-            "eye cream",
             "cream",
             "lotion",
             "emulsion",
@@ -87,7 +89,8 @@ BREADCRUMB_CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
     "cleanser": ("cleanser", "cleansing", "face cleansers"),
     "toner": ("toner", "exfoliator", "exfoliators"),
     "essence": ("mist & essence","face mist", "face mists", "facial mist", "setting spray"),
-    "serum": ("face serums", "eye serums", "ampoule", "eye care"),
+    "serum": ("face serums", "ampoule"),
+    "eyecare": ("eye care", "eyecare", "eye cream", "eye serums", "eye patch", "eye mask", "eye roller"),
     "moisturizer": ("moisturizer", "cream", "lotion", "gel", "emulsion"),
     "sunscreen": ("sunscreen", "sun cream", "sunblock", "spf", "sun care"),
 }
@@ -160,6 +163,32 @@ MOISTURIZER_FINISH_KEYWORDS: dict[str, tuple[str, ...]] = {
     "natural": ("natural", "natural finish", "natural-looking"),
     "dewy": ("dewy", "glowy"),
     "glassy": ("glassy", "glass skin", "healthy glow"),
+}
+
+EYECARE_CONCERN_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "puffiness": ("puffiness", "puffy", "depuff", "de-puff", "depuffing", "eye bag", "bags"),
+    "dark circles": ("dark circle", "dark circles", "under-eye circle", "undereye"),
+    "fine lines": (
+        "fine line",
+        "fine lines",
+        "wrinkle",
+        "anti-aging",
+        "anti aging",
+        "anti-ageing",
+        "retinol",
+        "retinal",
+        "bakuchiol",
+        "peptide",
+    ),
+    "brightening": ("brightening", "brighten", "glow", "niacinamide", "vitamin c"),
+    "hydrating": ("hydrating", "hydration", "hydrates", "hydrate", "moisturizing", "hydrogel"),
+}
+
+EYECARE_FORMAT_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "patch": ("eye patch", "eye patches", "hydrogel patch", "patch"),
+    "mask": ("eye mask", "eye masks"),
+    "cream": ("eye cream", "cream"),
+    "serum": ("eye serum", "serum", "ampoule", "roller"),
 }
 
 # "What it is" description hints when explicit finish terms are absent.
@@ -519,6 +548,15 @@ def _pick_toner_format(product_name: str) -> str:
     return "liquid toner"
 
 
+def _pick_eyecare_format(product_name: str, text: str) -> str:
+    name_lower = product_name.lower()
+    for label in EYECARE_FORMAT_PRIORITY:
+        if _text_has_any(name_lower, EYECARE_FORMAT_KEYWORDS[label]):
+            return label
+    hit = _pick_first_keyword_label(text, EYECARE_FORMAT_KEYWORDS, EYECARE_FORMAT_PRIORITY)
+    return hit or LABEL_NA
+
+
 def _pick_label_from_text(
     description_text: str,
     full_text: str,
@@ -595,6 +633,14 @@ def extract_labels(
         finish = _pick_moisturizer_finish(desc, text)
         filter_label = _extract_sunscreen_filter_label(text, ingredients) or LABEL_NA
         return _format_label_slots([spf, finish, filter_label])
+
+    elif category in ("eyecare", "eye care"):
+        concern = _pick_label_from_text(
+            desc, text, EYECARE_CONCERN_KEYWORDS, EYECARE_CONCERN_PRIORITY
+        )
+        return _format_label_slots(
+            [concern or LABEL_NA, _pick_eyecare_format(product_name, text)]
+        )
 
     return ""
 
