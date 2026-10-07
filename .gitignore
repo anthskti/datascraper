@@ -18,6 +18,7 @@ dist/
 
 # pycache
 __pycache__/
+*.egg-info/
 
 # example html file
 joseonofbeauty.html

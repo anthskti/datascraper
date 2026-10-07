@@ -1,0 +1,1 @@
+"""Merchant specific product sources."""

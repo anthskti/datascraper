@@ -8,3 +8,15 @@ dependencies = [
     "beautifulsoup4>=4.14.3",
     "playwright>=1.58.0",
 ]
+
+[project.scripts]
+datascraper = "datascraper.cli:main"
+
+[tool.uv]
+package = true
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

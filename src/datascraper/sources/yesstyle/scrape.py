@@ -6,40 +6,22 @@ Output: outputs/yesstyle_output.csv
 """
 
 import asyncio
-import argparse
 import csv
 import logging
 from pathlib import Path
 
-from yesstyle_scrapper import get_first_product_link, scrape_yesstyle_product
+from datascraper.models import OUTPUT_FIELDS
+from datascraper.sources.yesstyle.scraper import get_first_product_link, scrape_yesstyle_product
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-_ROOT = Path(__file__).resolve().parent.parent
+_ROOT = Path(__file__).resolve().parents[4]
 INPUT_CSV = _ROOT / "inputs" / "yesstyle_input.csv"
 OUTPUT_CSV = _ROOT / "outputs" / "yesstyle_output.csv"
 MAX_WORKERS = 5 # Conservative default for lower throttle risk on 100+ runs
 DELAY_BETWEEN_REQUESTS = 5 # Seconds reduces throttle risk
 MERCHANT = "Yesstyle"
-
-OUTPUT_FIELDS = [
-    "name", 
-    "brand", 
-    "category", 
-    "labels",   
-    "skinType",
-    "country",
-    "capacity",
-    "price", 
-    "instructions", 
-    "ingredients", 
-    "imageUrls", 
-    "averageRating",
-    "url", 
-    "merchant",
-    "status"
-]
 
 def _product_key(brand: str, product_name: str) -> str:
     return f"{brand.strip().lower()}::{product_name.strip().lower()}"
@@ -170,47 +152,3 @@ async def run_pipeline(
             )
 
     logger.info("Done. Output saved to %s", output_csv)
-
-
-def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Scrape YesStyle product data from an input CSV."
-    )
-    parser.add_argument(
-        "--input",
-        type=Path,
-        default=INPUT_CSV,
-        help=f"Input CSV path (default: {INPUT_CSV})",
-    )
-    parser.add_argument(
-        "--output",
-        type=Path,
-        default=OUTPUT_CSV,
-        help=f"Output CSV path (default: {OUTPUT_CSV})",
-    )
-    parser.add_argument(
-        "--workers",
-        type=int,
-        default=MAX_WORKERS,
-        help=f"Number of concurrent workers (default: {MAX_WORKERS})",
-    )
-    parser.add_argument(
-        "--delay",
-        type=float,
-        default=DELAY_BETWEEN_REQUESTS,
-        help=f"Delay in seconds per task after each scrape (default: {DELAY_BETWEEN_REQUESTS})",
-    )
-    return parser.parse_args()
-
-if __name__ == "__main__":
-    args = _parse_args()
-    workers = max(1, args.workers)
-    delay = max(0.0, args.delay)
-    asyncio.run(
-        run_pipeline(
-            input_csv=args.input,
-            output_csv=args.output,
-            max_workers=workers,
-            delay_between_requests=delay,
-        )
-    )

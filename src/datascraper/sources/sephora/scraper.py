@@ -6,7 +6,7 @@ import asyncio
 import logging
 import re
 
-from sephora_extractor import (
+from datascraper.sources.sephora.extractors import (
     # Needed for labels
     extract_sephora_marketing_text,
     extract_sephora_what_it_is,

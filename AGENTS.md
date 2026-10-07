@@ -6,7 +6,7 @@ Local Python tool that scrapes skincare product data (YesStyle, Sephora) for [Cl
 
 The work plan is [01-data-pipeline.md](./01-data-pipeline.md). Read it before starting. It is the source of truth for decisions, the five phases, and open questions.
 
-- Phase 0 (package restructure) comes first. Until it is done, the "Current layout" below applies; after it, use the "Target layout" in the plan and update this file.
+- Phase 0 (package restructure) is complete; the package layout below is current.
 - Implement **one phase at a time**, in order. Stop after each phase and summarize; don't start the next one unprompted.
 - Don't re-litigate the decisions table (scraper stays local, Cloudflare R2, local-only ML, CSV hand-off first).
 - If a phase depends on something undecided (an "Open question"), or on the ClearUp backend/DB (e.g. the `skinTypeSource` migration lives in the other repo), ask rather than guess.
@@ -16,29 +16,32 @@ The work plan is [01-data-pipeline.md](./01-data-pipeline.md). Read it before st
 
 - Python 3.13, managed with **uv**. Add deps with `uv add <pkg>` (never `pip install`). Run everything with `uv run`.
 - First-time browser install: `uv run playwright install chromium`.
-- Run scripts from the repo root as files, not modules:
+- Run commands from the repo root:
   ```bash
-  uv run python yesstyle/yesstyle_scrapper.py          # single product, for testing
-  uv run python yesstyle/scrape_yesstyle.py --input inputs/yesstyle_input_v2.csv --output outputs/yesstyle_output.csv --workers 5 --delay 5
-  uv run python sephora/scrape_sephora.py --help
+  uv run datascraper scrape yesstyle --input inputs/yesstyle_input_v2.csv --output outputs/yesstyle_output.csv --workers 5 --delay 5
+  uv run datascraper scrape sephora --input inputs/sephora_input.csv --output outputs/sephora_output.csv --workers 4 --delay 8
+  uv run datascraper --help
   ```
 - There is **no test suite, linter, or CI** yet. Verify changes by running the relevant script on a small input (a few rows) and inspecting the output CSV. If you add tests, use `pytest` (add as a dev dependency) and keep them offline: use saved HTML fixtures, never live sites.
 - [main.py](./main.py) is an unused stub.
 
-## Current layout (pre-Phase 0)
+## Layout
 
 | Path                                                              | Role                                                                                                                                                     |
 | ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [product_taxonomy.py](./product_taxonomy.py)                      | Shared normalization: category, labels, skin-type synonym mapping, enums. Merchant-agnostic. **Extend this rather than duplicating rules in a scraper.** |
-| `yesstyle/yesstyle_extractors.py`, `sephora/sephora_extractor.py` | Merchant-specific BeautifulSoup selectors (DOM → raw fields). Site markup changes get fixed here.                                                        |
-| `yesstyle/yesstyle_scrapper.py`, `sephora/sephora_scrapper.py`    | Scrape **one** product (Playwright navigation + extractors + taxonomy).                                                                                  |
-| `yesstyle/scrape_yesstyle.py`, `sephora/scrape_sephora.py`        | Batch orchestrators: read input CSV, run scrapers with a semaphore + delay, write output CSV.                                                            |
+| `src/datascraper/taxonomy.py`                                     | Shared normalization: category, labels, skin-type synonym mapping, enums. Merchant-agnostic. **Extend this rather than duplicating rules in a scraper.** |
+| `src/datascraper/sources/<merchant>/extractors.py`                | Merchant-specific BeautifulSoup selectors (DOM → raw fields). Site markup changes get fixed here.                                                        |
+| `src/datascraper/sources/<merchant>/scraper.py`                   | Scrape **one** product (Playwright navigation + extractors + taxonomy).                                                                                  |
+| `src/datascraper/sources/<merchant>/scrape.py`                    | Batch orchestration: read input CSV, run scrapers with a semaphore + delay, write output CSV.                                                             |
+| `src/datascraper/models.py`                                       | Shared `Product` type and single `OUTPUT_FIELDS` definition.                                                                                              |
+| `src/datascraper/cli.py`                                          | `datascraper scrape yesstyle|sephora` command-line interface.                                                                                            |
+| `src/datascraper/pipeline/`, `src/datascraper/storage/`            | Extension points for later pipeline phases; Phase 0 adds package markers only.                                                                             |
 | `inputs/`, `outputs/`                                             | Data (gitignored). `outputs/master.csv` is the merged dataset; `migration.csv` is the ClearUp import.                                                    |
 | `docs/`, `extra/`                                                 | Gitignored scratch notes and sample HTML. Not authoritative; don't commit to them.                                                                       |
 
-Layering: orchestrator → scrapper → extractors → `product_taxonomy`. Keep that direction; extractors don't do I/O or navigation.
+Layering: CLI → merchant batch orchestrator → single-product scraper → extractors → `datascraper.taxonomy`. Keep that direction; extractors don't do I/O or navigation.
 
-New data sources (affiliate feeds, Shopify JSON, Open Beauty Facts) should follow the same shape: a source-specific module that produces the common output row, reusing `product_taxonomy`. Put them in their own folder (e.g. `shopify/`) with a short README like the existing ones.
+New data sources (affiliate feeds, Shopify JSON, Open Beauty Facts) should follow the same shape: a source-specific module that produces the common output row, reusing `datascraper.taxonomy`. Put them in their own folder under `src/datascraper/sources/` with a short README.
 
 ## Data contract
 
@@ -46,7 +49,7 @@ Output row fields (order matters; the CSV is imported into ClearUp):
 
 `name, brand, category, labels, skinType, country, capacity, price, instructions, ingredients, imageUrls, averageRating, url, merchant, status`
 
-- `skinType` values must come from `ALL_SKIN_TYPES` in `product_taxonomy.py` (`oily, dry, combination, sensitive, normal, acne-prone`). Missing is `N/A`; unknown labels are `-` (`LABEL_NA`).
+- `skinType` values must come from `ALL_SKIN_TYPES` in `src/datascraper/taxonomy.py` (`oily, dry, combination, sensitive, normal, acne-prone`). Missing is `N/A`; unknown labels are `-` (`LABEL_NA`).
 - `status` marks success or failure per row. A failed scrape must **never overwrite** a previously good value; flag it instead.
 - Adding or renaming a field is a contract change with the ClearUp repo. Make it additive where possible, update `OUTPUT_FIELDS` in every orchestrator, and call it out in your summary.
 - Keep original merchant image URLs only in scraper output. The DB should get R2 URLs (see plan §4).
@@ -57,7 +60,7 @@ Output row fields (order matters; the CSV is imported into ClearUp):
 - Use `logging` (`logger = logging.getLogger(__name__)`), not `print`, in scraper code.
 - Type hints use modern syntax (`str | None`, `list[str]`).
 - Paths are built from `Path(__file__).resolve().parent...`, never from the cwd.
-- Scrapers import siblings by bare name (`from yesstyle_scrapper import ...`) and add the repo root to `sys.path` for `product_taxonomy`. Follow that pattern in new scripts.
+- Package imports use `datascraper.*`; do not add `sys.path` hacks.
 - Prefer stable structured sources over fragile DOM scraping: affiliate feed > JSON-LD / `__NEXT_DATA__` / Shopify `.json` > Playwright + BS4 > LLM (discovery only). LLMs are never used in the refresh path.
 - Be a polite scraper: respect throttling, don't hammer sites, don't bypass logins or paywalls.
 
