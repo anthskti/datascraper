@@ -13,7 +13,7 @@ uv run python yesstyle/yesstyle_scrapper.py
 
 Run Pipeline (need `inputs/yesstyle_input.csv`):
 ```bash
-uv run python yesstyle/scrape_yesstyle.py
+uv run python yesstyle/scrape_yesstyle.py --inputs/yesstyle_input_v2.csv
 ```
 
 CLI inputs for `--input`, `--output`, `--workers`, `--delay`:

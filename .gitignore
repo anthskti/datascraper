@@ -21,3 +21,9 @@ __pycache__/
 
 # example html file
 joseonofbeauty.html
+
+.DS_Store
+
+01-data-pipeline.md
+
+.env
