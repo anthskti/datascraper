@@ -18,6 +18,13 @@ dist/
 
 # pycache
 __pycache__/
+*.egg-info/
 
 # example html file
 joseonofbeauty.html
+
+.DS_Store
+
+01-data-pipeline.md
+
+.env

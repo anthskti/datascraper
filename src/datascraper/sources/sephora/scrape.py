@@ -5,42 +5,24 @@ Input:  inputs/sephora_input.csv          (product_id, url)
 Output: outputs/sephora_output.csv        (schema matches sephora_expected_output.csv)
 """
 
-import argparse
 import asyncio
 import csv
 import logging
 import re
 from pathlib import Path
 
-from sephora_scrapper import scrape_sephora_product
+from datascraper.models import OUTPUT_FIELDS
+from datascraper.sources.sephora.scraper import scrape_sephora_product
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-_ROOT = Path(__file__).resolve().parent.parent
+_ROOT = Path(__file__).resolve().parents[4]
 INPUT_CSV = _ROOT / "inputs" / "sephora_input2.csv"
 OUTPUT_CSV = _ROOT / "outputs" / "sephora_output.csv"
 MAX_WORKERS = 4
 DELAY_BETWEEN_REQUESTS = 8
 MERCHANT = "Sephora"
-
-OUTPUT_FIELDS = [
-    "name",
-    "brand",
-    "category",
-    "labels",
-    "skinType",
-    "country",
-    "capacity",
-    "price",
-    "instructions",
-    "ingredients",
-    "imageUrls",
-    "averageRating",
-    "url",
-    "merchant",
-    "status",
-]
 
 _PRODUCT_ID_RE = re.compile(r"-P(\d+)$", re.IGNORECASE)
 
@@ -187,51 +169,3 @@ async def run_pipeline(
             )
 
     logger.info("Done. Output saved to %s", output_csv)
-
-
-def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Scrape Sephora product data from an input CSV."
-    )
-    parser.add_argument(
-        "--input",
-        type=Path,
-        default=INPUT_CSV,
-        help=f"Input CSV path (default: {INPUT_CSV})",
-    )
-    parser.add_argument(
-        "--output",
-        type=Path,
-        default=OUTPUT_CSV,
-        help=f"Output CSV path (default: {OUTPUT_CSV})",
-    )
-    parser.add_argument(
-        "--workers",
-        type=int,
-        default=MAX_WORKERS,
-        help=f"Number of concurrent workers (default: {MAX_WORKERS})",
-    )
-    parser.add_argument(
-        "--delay",
-        type=float,
-        default=DELAY_BETWEEN_REQUESTS,
-        help=(
-            f"Delay in seconds per task after each scrape "
-            f"(default: {DELAY_BETWEEN_REQUESTS})"
-        ),
-    )
-    return parser.parse_args()
-
-
-if __name__ == "__main__":
-    args = _parse_args()
-    workers = max(1, args.workers)
-    delay = max(0.0, args.delay)
-    asyncio.run(
-        run_pipeline(
-            input_csv=args.input,
-            output_csv=args.output,
-            max_workers=workers,
-            delay_between_requests=delay,
-        )
-    )
