@@ -2,7 +2,10 @@
 
 import argparse
 import asyncio
+import logging
 from pathlib import Path
+
+logging.basicConfig(level=logging.INFO)
 
 
 def main() -> None:
@@ -18,8 +21,39 @@ def main() -> None:
         merchant_parser.add_argument("--workers", type=int)
         merchant_parser.add_argument("--delay", type=float)
 
+    images = commands.add_parser("images", help="Ingest product images into R2")
+    image_commands = images.add_subparsers(dest="image_command", required=True)
+    ingest = image_commands.add_parser("ingest", help="Create an import CSV with R2 image URLs")
+    ingest.add_argument("--input", type=Path, required=True)
+    ingest.add_argument("--output", type=Path, required=True)
+    ingest.add_argument("--progress", type=Path)
+    ingest.add_argument("--dry-run", action="store_true")
+
+    backfill = commands.add_parser("backfill", help="Backfill existing product data")
+    backfill_commands = backfill.add_subparsers(dest="backfill_type", required=True)
+    backfill_images = backfill_commands.add_parser("images", help="Ingest images from an existing CSV")
+    repo_root = Path(__file__).resolve().parents[2]
+    backfill_images.add_argument("--input", type=Path, default=repo_root / "outputs" / "master.csv")
+    backfill_images.add_argument("--output", type=Path, default=repo_root / "outputs" / "master_r2.csv")
+    backfill_images.add_argument("--progress", type=Path)
+    backfill_images.add_argument("--dry-run", action="store_true")
+
     args = parser.parse_args()
-    if args.command == "scrape" and args.merchant == "yesstyle":
+    if args.command == "images" or args.command == "backfill":
+        from datascraper.pipeline.images import ingest_images
+
+        try:
+            ingest_images(
+                input_csv=args.input,
+                output_csv=args.output,
+                dry_run=args.dry_run,
+                progress_path=getattr(args, "progress", None),
+            )
+        except Exception as exc:
+            parser.exit(1, f"datascraper: error: {exc}\n")
+        return
+
+    if args.merchant == "yesstyle":
         from datascraper.sources.yesstyle.scrape import (
             DELAY_BETWEEN_REQUESTS,
             INPUT_CSV,

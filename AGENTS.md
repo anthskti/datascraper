@@ -20,6 +20,8 @@ The work plan is [01-data-pipeline.md](./01-data-pipeline.md). Read it before st
   ```bash
   uv run datascraper scrape yesstyle --input inputs/yesstyle_input_v2.csv --output outputs/yesstyle_output.csv --workers 5 --delay 5
   uv run datascraper scrape sephora --input inputs/sephora_input.csv --output outputs/sephora_output.csv --workers 4 --delay 8
+  uv run datascraper images ingest --input outputs/yesstyle_output.csv --output outputs/yesstyle_import.csv --dry-run
+  uv run datascraper backfill images --input outputs/master.csv --output outputs/master_r2.csv --dry-run
   uv run datascraper --help
   ```
 - There is **no test suite, linter, or CI** yet. Verify changes by running the relevant script on a small input (a few rows) and inspecting the output CSV. If you add tests, use `pytest` (add as a dev dependency) and keep them offline: use saved HTML fixtures, never live sites.
@@ -34,8 +36,9 @@ The work plan is [01-data-pipeline.md](./01-data-pipeline.md). Read it before st
 | `src/datascraper/sources/<merchant>/scraper.py`                   | Scrape **one** product (Playwright navigation + extractors + taxonomy).                                                                                  |
 | `src/datascraper/sources/<merchant>/scrape.py`                    | Batch orchestration: read input CSV, run scrapers with a semaphore + delay, write output CSV.                                                             |
 | `src/datascraper/models.py`                                       | Shared `Product` type and single `OUTPUT_FIELDS` definition.                                                                                              |
-| `src/datascraper/cli.py`                                          | `datascraper scrape yesstyle|sephora` command-line interface.                                                                                            |
-| `src/datascraper/pipeline/`, `src/datascraper/storage/`            | Extension points for later pipeline phases; Phase 0 adds package markers only.                                                                             |
+| `src/datascraper/cli.py`                                          | `datascraper scrape`, `images ingest`, and `backfill images` command-line interface.                                                                       |
+| `src/datascraper/pipeline/images.py`                              | Image download, WebP conversion, R2 ingest, and resumable CSV transformation.                                                                               |
+| `src/datascraper/storage/r2.py`                                   | Cloudflare R2 client using its S3-compatible API.                                                                                                           |
 | `inputs/`, `outputs/`                                             | Data (gitignored). `outputs/master.csv` is the merged dataset; `migration.csv` is the ClearUp import.                                                    |
 | `docs/`, `extra/`                                                 | Gitignored scratch notes and sample HTML. Not authoritative; don't commit to them.                                                                       |
 
@@ -66,7 +69,7 @@ Output row fields (order matters; the CSV is imported into ClearUp):
 
 ## Secrets and safety
 
-- R2/S3 credentials, affiliate API keys, etc. go in environment variables or a gitignored `.env`. Never hardcode or commit them, and add any new secret file to [.gitignore](./.gitignore).
+- R2/S3 credentials, affiliate API keys, etc. go in environment variables or a gitignored `.env`. Never hardcode or commit them, and add any new secret file to [.gitignore](./.gitignore). The CLI reads R2 settings from the environment; source `.env` in the shell before running it.
 - `inputs/` and `outputs/` are gitignored; don't force-add them. Keep downloaded images and caches out of git too (add a gitignore entry for any new data directory).
 - Network writes (R2 uploads, DB upserts) must be idempotent (deterministic keys such as `products/<productId>/<n>.webp`, upsert not insert) and support a `--dry-run`. Don't run a real upload or DB write without being asked.
 - Backfills run over ~400 products: make them resumable (skip already-done items) so a failure doesn't mean starting over.
