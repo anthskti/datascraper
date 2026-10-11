@@ -45,7 +45,7 @@ uv run datascraper backfill images --input outputs/master.csv --output outputs/m
 uv run datascraper backfill images --input outputs/master.csv --output outputs/master_r2.csv
 ```
 
-R2 product keys use a SHA-256 digest of the trimmed, lowercased `brand::name` identity, followed by the image position and source-URL digest. Scraper CSVs retain their original merchant image URLs; the derived import CSV contains R2 URLs and only includes successful rows with images. Unsuccessful and imageless rows are skipped so they cannot clear existing images. Ingest stops without writing a completed CSV if any eligible image fails, and can resume completed uploads on rerun.
+R2 product keys use a SHA-256 digest of the trimmed, lowercased `brand::name` identity, followed by the image position and source-URL digest. Scraper CSVs retain their original merchant image URLs; the derived import CSV contains R2 URLs and only includes successful rows with images. Unsuccessful and imageless rows are skipped so they cannot clear existing images. Ingest continues through the batch after an image error and logs `processed`, `skipped`, and `failed` row counts; if any eligible row fails, it does not write a new output CSV. Completed uploads are resumable on rerun.
 
 Author: Anthony Pham
 Created: February 17, 2026

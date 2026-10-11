@@ -188,16 +188,6 @@ def ingest_images(
             raise RuntimeError(f"Dry run found {len(failures)} row(s) that cannot be ingested")
         return total_images
 
-    failures: list[str] = []
-    for row_index in eligible_rows:
-        row = rows[row_index]
-        try:
-            _product_digest(row.get("brand") or "", row.get("name") or "")
-        except ValueError as exc:
-            failures.append(f"Row {row_index + 2}: {exc}")
-    if failures:
-        raise RuntimeError(f"Image ingest preflight failed: {'; '.join(failures)}")
-
     state_path = progress_path or _DEFAULT_PROGRESS
     if state_path.resolve() in {input_csv.resolve(), output_csv.resolve()}:
         raise ValueError("Progress file must be different from input and output CSV paths")
@@ -205,33 +195,49 @@ def ingest_images(
     storage = R2Storage(config)
     completed = _load_progress(state_path, config.account_id, config.bucket)
     replacements: list[list[str]] = [[] for _ in rows]
+    processed_rows = 0
+    failed_rows = 0
+    failures: list[str] = []
 
     for row_index in eligible_rows:
         row = rows[row_index]
         urls = urls_by_row[row_index]
-        for index, source_url in enumerate(urls, start=1):
-            key = _image_key(row.get("brand") or "", row.get("name") or "", index, source_url)
-            if key in completed:
-                replacements[row_index].append(storage.public_url(key))
-                continue
-            try:
+        failed_url = "N/A"
+        try:
+            _product_digest(row.get("brand") or "", row.get("name") or "")
+            for index, source_url in enumerate(urls, start=1):
+                failed_url = source_url
+                key = _image_key(
+                    row.get("brand") or "", row.get("name") or "", index, source_url
+                )
+                if key in completed:
+                    replacements[row_index].append(storage.public_url(key))
+                    continue
                 webp = _to_webp(_download_image(source_url))
                 public_url = storage.upload_webp(key, webp)
                 _record_progress(state_path, config.account_id, config.bucket, key)
                 completed.add(key)
                 replacements[row_index].append(public_url)
                 logger.info("Uploaded %s", key)
-            except Exception as exc:
-                failures.append(f"{source_url}: {exc}")
-                break
-        if failures:
-            break
+            processed_rows += 1
+        except Exception as exc:
+            failed_rows += 1
+            failures.append(
+                f"Row {row_index + 2} ({row.get('brand', '')} / {row.get('name', '')}), "
+                f"{failed_url}: {exc}"
+            )
 
+    logger.info(
+        "Image ingest summary: processed: %d, skipped: %d, failed: %d",
+        processed_rows,
+        skipped_rows,
+        failed_rows,
+    )
     if failures:
-        logger.error("Image ingest incomplete (%d failures); no output CSV written", len(failures))
+        logger.error("Image ingest incomplete; no output CSV written")
         for failure in failures:
             logger.error("%s", failure)
-        raise RuntimeError(f"Image ingest failed for {len(failures)} image row(s); rerun to resume")
+        raise RuntimeError(f"Image ingest failed for {failed_rows} row(s); rerun to resume")
 
     output_rows: list[dict[str, str]] = []
     for row_index in eligible_rows:
@@ -240,10 +246,9 @@ def ingest_images(
         output_rows.append(row)
     _write_csv(output_csv, output_rows)
     logger.info(
-        "Wrote image import CSV to %s (%d rows, %d images; skipped %d rows)",
+        "Wrote image import CSV to %s (%d rows, %d images)",
         output_csv,
         len(output_rows),
         total_images,
-        skipped_rows,
     )
     return total_images
