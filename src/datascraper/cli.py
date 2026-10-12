@@ -29,6 +29,17 @@ def main() -> None:
     prices.add_argument("--workers", type=int, default=1)
     prices.add_argument("--delay", type=float, default=5.0)
 
+    enrich = commands.add_parser("enrich", help="Enrich product CSV data locally")
+    enrich_commands = enrich.add_subparsers(dest="enrich_type", required=True)
+    skin_types = enrich_commands.add_parser(
+        "skin-types", help="Infer product skin types with a local Ollama model"
+    )
+    skin_types.add_argument("--input", type=Path, required=True)
+    skin_types.add_argument("--output", type=Path, required=True)
+    skin_types.add_argument("--limit", type=int, help="Process at most this many eligible rows")
+    skin_types.add_argument("--model", default="gemma4:12b-mlx")
+    skin_types.add_argument("--ollama-url", default="http://localhost:11434")
+
     images = commands.add_parser("images", help="Ingest product images into R2")
     image_commands = images.add_subparsers(dest="image_command", required=True)
     ingest = image_commands.add_parser("ingest", help="Create an import CSV with R2 image URLs")
@@ -58,6 +69,21 @@ def main() -> None:
                     max_workers=max(1, args.workers),
                     delay_between_requests=max(0.0, args.delay),
                 )
+            )
+        except Exception as exc:
+            parser.exit(1, f"datascraper: error: {exc}\n")
+        return
+
+    if args.command == "enrich":
+        from datascraper.pipeline.enrichment import enrich_skin_types
+
+        try:
+            enrich_skin_types(
+                input_csv=args.input,
+                output_csv=args.output,
+                limit=args.limit,
+                model=args.model,
+                ollama_url=args.ollama_url,
             )
         except Exception as exc:
             parser.exit(1, f"datascraper: error: {exc}\n")

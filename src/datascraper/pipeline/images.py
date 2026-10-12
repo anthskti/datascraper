@@ -150,9 +150,11 @@ def ingest_images(
 
     with input_csv.open(newline="", encoding="utf-8-sig") as input_file:
         reader = csv.DictReader(input_file)
-        required_fields = {"name", "brand", "imageUrls", "status"}
+        required_fields = {"name", "brand", "imageUrls", "status", "skinTypeSource"}
         if not reader.fieldnames or not required_fields.issubset(reader.fieldnames):
-            raise ValueError("Input CSV must contain name, brand, imageUrls, and status columns")
+            raise ValueError(
+                "Input CSV must contain name, brand, imageUrls, status, and skinTypeSource columns"
+            )
         rows = [dict(row) for row in reader]
 
     urls_by_row: list[list[str]] = [_image_urls(row.get("imageUrls")) for row in rows]

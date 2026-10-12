@@ -14,7 +14,7 @@ General Pipeline:
 2. Beautiful Soup: handles getting the data.
 
 Generally gets this product information line:
-name,brand,category,labels,skinType,country,capacity,price,instructions,ingredients,imageUrls,averageRating,url,merchant,status
+name,brand,category,labels,skinType,country,capacity,price,instructions,ingredients,imageUrls,averageRating,url,merchant,status,skinTypeSource
 
 ## Setup
 
@@ -32,6 +32,25 @@ uv run datascraper scrape sephora --input inputs/sephora_input.csv --output outp
 ```
 
 Use `uv run datascraper --help` or `uv run datascraper scrape --help` for options. `datascraper scrape` uses the full v1 sources; `datascraper refresh prices` uses the price-only v2 sources. The discovery output schema is in `datascraper.models`.
+
+## Enrich product skin types locally
+
+Install and start Ollama, then download the default model once:
+
+```bash
+ollama pull gemma4:12b-mlx
+```
+
+The local model infers skin types from the product name, category, and ingredients. Override the default with `--model` if needed. The input file is never modified, so compare the output against the original regex-based `skinType` values:
+
+```bash
+uv run datascraper enrich skin-types --input outputs/master.csv --output outputs/master_skin_types_sample.csv --limit 5
+uv run datascraper enrich skin-types --input outputs/master.csv --output outputs/master_skin_types.csv
+```
+
+Inference is restricted to `ALL_SKIN_TYPES`; insufficient evidence produces `N/A`. Rows marked `skinTypeSource=manual` or `inferred` are skipped on reruns. Legacy rows without provenance are inferred once, even when they already contain a scraped skin type. The output adds the internal `skinTypeSource` field; ClearUp must retain that field for manual edits and rerun-skipping to work end to end. This repository does not write to ClearUp.
+
+For later runs, use the latest enriched/import-export CSV as `--input`; reusing the original source CSV (without `skinTypeSource`) will intentionally trigger inference again. Keep the original CSV separately to compare model results with the regex values.
 
 ## Refresh merchant prices
 

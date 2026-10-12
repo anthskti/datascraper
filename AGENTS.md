@@ -35,7 +35,7 @@ The work plan is [01-data-pipeline.md](./01-data-pipeline.md). Read it before st
 | `src/datascraper/sources/v1/<merchant>/`           | Full discovery sources: extractors, single-product scraper, CSV batch orchestration, and README.                                                         |
 | `src/datascraper/sources/v2/<merchant>/`           | Slim refresh sources; currently extracts merchant price only.                                                                                           |
 | `src/datascraper/models.py`                        | Shared `Product` type and single `OUTPUT_FIELDS` definition.                                                                                             |
-| `src/datascraper/cli.py`                           | `datascraper scrape`, `refresh prices`, `images ingest`, and `backfill images` command-line interface.                                                  |
+| `src/datascraper/cli.py`                           | `datascraper scrape`, `refresh prices`, `enrich skin-types`, `images ingest`, and `backfill images` command-line interface.                                |
 | `src/datascraper/pipeline/refresh.py`              | Read-only ClearUp listing refresh and four-column refresh CSV.                                                                                            |
 | `src/datascraper/pipeline/images.py`               | Image download, WebP conversion, R2 ingest, and resumable CSV transformation.                                                                            |
 | `src/datascraper/storage/`                         | PostgreSQL read access and Cloudflare R2 client using its S3-compatible API.                                                                              |
@@ -50,10 +50,11 @@ New data sources (affiliate feeds, Shopify JSON, Open Beauty Facts) should follo
 
 Output row fields (order matters; the CSV is imported into Clearup):
 
-`name, brand, category, labels, skinType, country, capacity, price, instructions, ingredients, imageUrls, averageRating, url, merchant, status`
+`name, brand, category, labels, skinType, country, capacity, price, instructions, ingredients, imageUrls, averageRating, url, merchant, status, skinTypeSource`
 
 - `skinType` values must come from `ALL_SKIN_TYPES` in `src/datascraper/taxonomy.py` (`oily, dry, combination, sensitive, normal, acne-prone`). Missing is `N/A`; unknown labels are `-` (`LABEL_NA`).
 - `status` marks success or failure per row. A failed scrape must **never overwrite** a previously good value; flag it instead.
+- `skinTypeSource` is internal enrichment provenance (`inferred` or `manual`); it is not shown in the shopper UI. Discovery scrapers leave it blank for the local enrichment step.
 - Adding or renaming a field is a contract change with the Clearup repo. Make it additive where possible, update `OUTPUT_FIELDS` in every orchestrator, and call it out in your summary.
 - Keep original merchant image URLs only in scraper output. The DB should get R2 URLs (see plan §4).
 

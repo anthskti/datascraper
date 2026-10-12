@@ -2,8 +2,10 @@
 .venv/
 
 # Inputted Data 
-inputs/
+raw_inputs/
 outputs/
+init_outputs/
+pr_outputs/
 
 # Incomplete Dev Docs and Testing
 extra/

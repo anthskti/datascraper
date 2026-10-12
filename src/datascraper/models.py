@@ -9,6 +9,7 @@ OUTPUT_FIELDS = [
     "category",
     "labels",
     "skinType",
+    "skinTypeSource",
     "country",
     "capacity",
     "price",
@@ -28,6 +29,7 @@ class Product(TypedDict):
     category: str
     labels: str
     skinType: str
+    skinTypeSource: str
     country: str
     capacity: str
     price: str
@@ -38,3 +40,4 @@ class Product(TypedDict):
     url: str
     merchant: str
     status: str
+    
