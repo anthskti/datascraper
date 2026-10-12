@@ -48,7 +48,7 @@ uv run datascraper enrich skin-types --input outputs/master.csv --output outputs
 uv run datascraper enrich skin-types --input outputs/master.csv --output outputs/master_skin_types.csv
 ```
 
-Inference is restricted to `ALL_SKIN_TYPES`; insufficient evidence produces `N/A`. Rows marked `skinTypeSource=manual` or `inferred` are skipped on reruns. Legacy rows without provenance are inferred once, even when they already contain a scraped skin type. The output adds the internal `skinTypeSource` field; ClearUp must retain that field for manual edits and rerun-skipping to work end to end. This repository does not write to ClearUp.
+Inference is restricted to `ALL_SKIN_TYPES`; insufficient evidence produces `N/A`. The model considers the overall product purpose and formula, does not infer suitability from a single ingredient or marketing phrase, and should omit uncertain skin types. Product name, category, and ingredients are sent as structured data; the model is instructed to return only a JSON label array. The result is validated locally against the allowed taxonomy. Rows marked `skinTypeSource=manual` or `inferred` are skipped on reruns. Legacy rows without provenance are inferred once, even when they already contain a scraped skin type. The output adds the internal `skinTypeSource` field; ClearUp must retain that field for manual edits and rerun-skipping to work end to end. This repository does not write to ClearUp.
 
 For later runs, use the latest enriched/import-export CSV as `--input`; reusing the original source CSV (without `skinTypeSource`) will intentionally trigger inference again. Keep the original CSV separately to compare model results with the regex values.
 
