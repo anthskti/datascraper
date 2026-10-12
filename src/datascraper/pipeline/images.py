@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import ipaddress
 import io
 import json
 import logging
 import os
+import socket
 import tempfile
 from pathlib import Path
 from urllib.error import URLError
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from PIL import Image, ImageOps
 
@@ -52,14 +54,54 @@ def _image_key(brand: str, name: str, index: int, source_url: str) -> str:
     return f"products/{product_id}/{index}-{source_id}.webp"
 
 
+def _validate_public_image_url(url: str) -> None:
+    try:
+        parsed = urlsplit(url)
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("Image URL must be a valid http or https URL") from exc
+
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not hostname
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        raise ValueError("Image URL must use http or https and must not contain credentials")
+
+    expected_port = 443 if parsed.scheme == "https" else 80
+    if port is not None and port != expected_port:
+        raise ValueError("Image URL must use the standard http or https port")
+    port = expected_port
+
+    try:
+        addresses = socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
+    except OSError as exc:
+        raise ValueError("Image host could not be resolved") from exc
+    try:
+        has_non_public_address = any(
+            not ipaddress.ip_address(address[4][0]).is_global for address in addresses
+        )
+    except ValueError as exc:
+        raise ValueError("Image host resolved to an invalid IP address") from exc
+    if not addresses or has_non_public_address:
+        raise ValueError("Image host must resolve only to public IP addresses")
+
+
+class _PublicRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _validate_public_image_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def _download_image(url: str) -> bytes:
-    parsed = urlsplit(url)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ValueError("Image URL must use http or https")
+    _validate_public_image_url(url)
 
     request = Request(url, headers={"User-Agent": "datascraper/0.1"})
     try:
-        with urlopen(request, timeout=30) as response:
+        with build_opener(_PublicRedirectHandler()).open(request, timeout=30) as response:
+            _validate_public_image_url(response.geturl())
             content = response.read(_MAX_IMAGE_BYTES + 1)
     except URLError as exc:
         raise ValueError(f"Image download failed: {exc}") from exc
