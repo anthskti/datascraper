@@ -16,7 +16,7 @@ from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 
 from datascraper.taxonomy import extract_category, extract_labels, extract_skintype
-from datascraper.sources.yesstyle.extractors import (
+from datascraper.sources.v1.yesstyle.extractors import (
     extract_capacity,
     extract_country,
     extract_how_to_use,

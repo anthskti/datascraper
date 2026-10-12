@@ -21,6 +21,14 @@ def main() -> None:
         merchant_parser.add_argument("--workers", type=int)
         merchant_parser.add_argument("--delay", type=float)
 
+    refresh = commands.add_parser("refresh", help="Refresh prices for Clearup merchant listings")
+    refresh_commands = refresh.add_subparsers(dest="refresh_type", required=True)
+    prices = refresh_commands.add_parser("prices", help="Write refreshed merchant prices to CSV")
+    prices.add_argument("--output", type=Path, default=Path("outputs/price_refresh.csv"))
+    prices.add_argument("--limit", type=int, help="Refresh at most this many Clearup listings")
+    prices.add_argument("--workers", type=int, default=1)
+    prices.add_argument("--delay", type=float, default=5.0)
+
     images = commands.add_parser("images", help="Ingest product images into R2")
     image_commands = images.add_subparsers(dest="image_command", required=True)
     ingest = image_commands.add_parser("ingest", help="Create an import CSV with R2 image URLs")
@@ -39,6 +47,22 @@ def main() -> None:
     backfill_images.add_argument("--dry-run", action="store_true")
 
     args = parser.parse_args()
+    if args.command == "refresh":
+        from datascraper.pipeline.refresh import refresh_prices
+
+        try:
+            asyncio.run(
+                refresh_prices(
+                    output_csv=args.output,
+                    limit=args.limit,
+                    max_workers=max(1, args.workers),
+                    delay_between_requests=max(0.0, args.delay),
+                )
+            )
+        except Exception as exc:
+            parser.exit(1, f"datascraper: error: {exc}\n")
+        return
+
     if args.command == "images" or args.command == "backfill":
         from datascraper.pipeline.images import ingest_images
 
@@ -54,7 +78,7 @@ def main() -> None:
         return
 
     if args.merchant == "yesstyle":
-        from datascraper.sources.yesstyle.scrape import (
+        from datascraper.sources.v1.yesstyle.scrape import (
             DELAY_BETWEEN_REQUESTS,
             INPUT_CSV,
             MAX_WORKERS,
@@ -62,7 +86,7 @@ def main() -> None:
             run_pipeline,
         )
     else:
-        from datascraper.sources.sephora.scrape import (
+        from datascraper.sources.v1.sephora.scrape import (
             DELAY_BETWEEN_REQUESTS,
             INPUT_CSV,
             MAX_WORKERS,

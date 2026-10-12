@@ -11,7 +11,10 @@ import logging
 from pathlib import Path
 
 from datascraper.models import OUTPUT_FIELDS
-from datascraper.sources.yesstyle.scraper import get_first_product_link, scrape_yesstyle_product
+from datascraper.sources.v1.yesstyle.scraper import (
+    get_first_product_link,
+    scrape_yesstyle_product,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

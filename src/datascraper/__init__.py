@@ -1,1 +1,1 @@
-"""Product data scraping tools for ClearUp."""
+"""Product data scraping tools for Clearup."""

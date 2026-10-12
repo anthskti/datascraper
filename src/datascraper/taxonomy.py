@@ -1,13 +1,13 @@
 """
 Category, label, and skin-type rules for Clearup product taxonomy.
-Pure rules + soup-backed resolvers; DOM helpers live in the YesStyle extractors.
+Pure rules + soup-backed resolvers; DOM helpers live in the v1 YesStyle extractors.
 """
 
 import re
 
 from bs4 import BeautifulSoup
 
-from datascraper.sources.yesstyle.extractors import (
+from datascraper.sources.v1.yesstyle.extractors import (
     extract_product_info_map,
     extract_product_name,
     marketing_search_roots,

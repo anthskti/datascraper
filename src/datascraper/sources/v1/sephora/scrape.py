@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 
 from datascraper.models import OUTPUT_FIELDS
-from datascraper.sources.sephora.scraper import scrape_sephora_product
+from datascraper.sources.v1.sephora.scraper import scrape_sephora_product
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

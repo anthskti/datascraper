@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Local Python tool that scrapes skincare product data (YesStyle, Sephora) for [ClearUp](https://www.clearup.skin) and hands it off as CSV. Solo-dev project; keep things simple.
+Local Python tool that scrapes skincare product data (YesStyle, Sephora) for [Clearup](https://www.clearup.skin) and hands it off as CSV. Solo-dev project; keep things simple.
 
 ## Current task: v2 data pipeline
 
@@ -9,7 +9,7 @@ The work plan is [01-data-pipeline.md](./01-data-pipeline.md). Read it before st
 - Phase 0 (package restructure) is complete; the package layout below is current.
 - Implement **one phase at a time**, in order. Stop after each phase and summarize; don't start the next one unprompted.
 - Don't re-litigate the decisions table (scraper stays local, Cloudflare R2, local-only ML, CSV hand-off first).
-- If a phase depends on something undecided (an "Open question"), or on the ClearUp backend/DB (e.g. the `skinTypeSource` migration lives in the other repo), ask rather than guess.
+- If a phase depends on something undecided (an "Open question"), or on the Clearup backend/DB (e.g. the `skinTypeSource` migration lives in the other repo), ask rather than guess.
 - When a phase is done, mark it done in the plan's "Phases" list and add notes on anything that deviated; don't rewrite its decisions.
 
 ## Setup and commands
@@ -29,32 +29,32 @@ The work plan is [01-data-pipeline.md](./01-data-pipeline.md). Read it before st
 
 ## Layout
 
-| Path                                                              | Role                                                                                                                                                     |
-| ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/datascraper/taxonomy.py`                                     | Shared normalization: category, labels, skin-type synonym mapping, enums. Merchant-agnostic. **Extend this rather than duplicating rules in a scraper.** |
-| `src/datascraper/sources/<merchant>/extractors.py`                | Merchant-specific BeautifulSoup selectors (DOM → raw fields). Site markup changes get fixed here.                                                        |
-| `src/datascraper/sources/<merchant>/scraper.py`                   | Scrape **one** product (Playwright navigation + extractors + taxonomy).                                                                                  |
-| `src/datascraper/sources/<merchant>/scrape.py`                    | Batch orchestration: read input CSV, run scrapers with a semaphore + delay, write output CSV.                                                             |
-| `src/datascraper/models.py`                                       | Shared `Product` type and single `OUTPUT_FIELDS` definition.                                                                                              |
-| `src/datascraper/cli.py`                                          | `datascraper scrape`, `images ingest`, and `backfill images` command-line interface.                                                                       |
-| `src/datascraper/pipeline/images.py`                              | Image download, WebP conversion, R2 ingest, and resumable CSV transformation.                                                                               |
-| `src/datascraper/storage/r2.py`                                   | Cloudflare R2 client using its S3-compatible API.                                                                                                           |
-| `inputs/`, `outputs/`                                             | Data (gitignored). `outputs/master.csv` is the merged dataset; `migration.csv` is the ClearUp import.                                                    |
-| `docs/`, `extra/`                                                 | Gitignored scratch notes and sample HTML. Not authoritative; don't commit to them.                                                                       |
+| Path                                               | Role                                                                                                                                                     |
+| -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/datascraper/taxonomy.py`                      | Shared normalization: category, labels, skin-type synonym mapping, enums. Merchant-agnostic. **Extend this rather than duplicating rules in a scraper.** |
+| `src/datascraper/sources/v1/<merchant>/`           | Full discovery sources: extractors, single-product scraper, CSV batch orchestration, and README.                                                         |
+| `src/datascraper/sources/v2/<merchant>/`           | Slim refresh sources; currently extracts merchant price only.                                                                                           |
+| `src/datascraper/models.py`                        | Shared `Product` type and single `OUTPUT_FIELDS` definition.                                                                                             |
+| `src/datascraper/cli.py`                           | `datascraper scrape`, `refresh prices`, `images ingest`, and `backfill images` command-line interface.                                                  |
+| `src/datascraper/pipeline/refresh.py`              | Read-only ClearUp listing refresh and four-column refresh CSV.                                                                                            |
+| `src/datascraper/pipeline/images.py`               | Image download, WebP conversion, R2 ingest, and resumable CSV transformation.                                                                            |
+| `src/datascraper/storage/`                         | PostgreSQL read access and Cloudflare R2 client using its S3-compatible API.                                                                              |
+| `inputs/`, `outputs/`                              | Data (gitignored). `outputs/master.csv` is the merged dataset; `migration.csv` is the Clearup import.                                                    |
+| `docs/`, `extra/`                                  | Gitignored scratch notes and sample HTML. Not authoritative; don't commit to them.                                                                       |
 
-Layering: CLI → merchant batch orchestrator → single-product scraper → extractors → `datascraper.taxonomy`. Keep that direction; extractors don't do I/O or navigation.
+Layering: discovery CLI → v1 merchant batch orchestrator → v1 single-product scraper → extractors → `datascraper.taxonomy`; refresh CLI → refresh pipeline → v2 price scraper/extractor. Extractors don't navigate or do unrelated I/O.
 
 New data sources (affiliate feeds, Shopify JSON, Open Beauty Facts) should follow the same shape: a source-specific module that produces the common output row, reusing `datascraper.taxonomy`. Put them in their own folder under `src/datascraper/sources/` with a short README.
 
 ## Data contract
 
-Output row fields (order matters; the CSV is imported into ClearUp):
+Output row fields (order matters; the CSV is imported into Clearup):
 
 `name, brand, category, labels, skinType, country, capacity, price, instructions, ingredients, imageUrls, averageRating, url, merchant, status`
 
 - `skinType` values must come from `ALL_SKIN_TYPES` in `src/datascraper/taxonomy.py` (`oily, dry, combination, sensitive, normal, acne-prone`). Missing is `N/A`; unknown labels are `-` (`LABEL_NA`).
 - `status` marks success or failure per row. A failed scrape must **never overwrite** a previously good value; flag it instead.
-- Adding or renaming a field is a contract change with the ClearUp repo. Make it additive where possible, update `OUTPUT_FIELDS` in every orchestrator, and call it out in your summary.
+- Adding or renaming a field is a contract change with the Clearup repo. Make it additive where possible, update `OUTPUT_FIELDS` in every orchestrator, and call it out in your summary.
 - Keep original merchant image URLs only in scraper output. The DB should get R2 URLs (see plan §4).
 
 ## Conventions
