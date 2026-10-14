@@ -1,8 +1,8 @@
 """
 Orchestrator for Sephora product scraping.
 
-Input:  inputs/sephora_input.csv          (product_id, url)
-Output: outputs/sephora_output.csv        (schema matches sephora_expected_output.csv)
+Input:  product_id,url CSV
+Output: outputs/runs/sephora_manual/products.csv
 """
 
 import asyncio
@@ -17,9 +17,9 @@ from datascraper.sources.v1.sephora.scraper import scrape_sephora_product
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-_ROOT = Path(__file__).resolve().parents[4]
-INPUT_CSV = _ROOT / "inputs" / "sephora_input2.csv"
-OUTPUT_CSV = _ROOT / "outputs" / "sephora_output.csv"
+_ROOT = Path(__file__).resolve().parents[5]
+INPUT_CSV = _ROOT / "inputs" / "legacy" / "sephora_products_v2.csv"
+OUTPUT_CSV = _ROOT / "outputs" / "runs" / "sephora_manual" / "products.csv"
 MAX_WORKERS = 4
 DELAY_BETWEEN_REQUESTS = 8
 MERCHANT = "Sephora"

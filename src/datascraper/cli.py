@@ -21,10 +21,31 @@ def main() -> None:
         merchant_parser.add_argument("--workers", type=int)
         merchant_parser.add_argument("--delay", type=float)
 
+    discover = commands.add_parser(
+        "discover", help="Discover and scrape products from retailer listings"
+    )
+    discover_commands = discover.add_subparsers(dest="discover_source", required=True)
+    yesstyle_discover = discover_commands.add_parser(
+        "yesstyle", help="Discover and scrape YesStyle products from brand listing pages"
+    )
+    yesstyle_discover.add_argument("--input", type=Path, required=True)
+    yesstyle_discover.add_argument("--output", type=Path, required=True, help="brand,url CSV")
+    yesstyle_discover.add_argument("--max-pages", type=int, default=30)
+    yesstyle_discover.add_argument("--max-depth", type=int, default=3)
+    yesstyle_discover.add_argument("--dataset-id", help="Reuse a saved Apify dataset (one brand row only)")
+    yesstyle_discover.add_argument("--wait-timeout", type=float, default=3600)
+
+    compare = commands.add_parser("compare", help="Compare scraped products with a catalog CSV")
+    compare_commands = compare.add_subparsers(dest="compare_type", required=True)
+    catalog = compare_commands.add_parser("catalog", help="Split products into new, existing, and review CSVs")
+    catalog.add_argument("--input", type=Path, required=True)
+    catalog.add_argument("--catalog", type=Path, required=True)
+    catalog.add_argument("--output-prefix", type=Path, required=True)
+
     refresh = commands.add_parser("refresh", help="Refresh prices for Clearup merchant listings")
     refresh_commands = refresh.add_subparsers(dest="refresh_type", required=True)
     prices = refresh_commands.add_parser("prices", help="Write refreshed merchant prices to CSV")
-    prices.add_argument("--output", type=Path, default=Path("outputs/price_refresh.csv"))
+    prices.add_argument("--output", type=Path, default=Path("outputs/refresh/price_refresh.csv"))
     prices.add_argument("--limit", type=int, help="Refresh at most this many Clearup listings")
     prices.add_argument("--workers", type=int, default=1)
     prices.add_argument("--delay", type=float, default=5.0)
@@ -52,12 +73,46 @@ def main() -> None:
     backfill_commands = backfill.add_subparsers(dest="backfill_type", required=True)
     backfill_images = backfill_commands.add_parser("images", help="Ingest images from an existing CSV")
     repo_root = Path(__file__).resolve().parents[2]
-    backfill_images.add_argument("--input", type=Path, default=repo_root / "outputs" / "master.csv")
-    backfill_images.add_argument("--output", type=Path, default=repo_root / "outputs" / "master_r2.csv")
+    backfill_images.add_argument(
+        "--input", type=Path, default=repo_root / "outputs" / "catalog" / "master.csv"
+    )
+    backfill_images.add_argument(
+        "--output", type=Path, default=repo_root / "outputs" / "catalog" / "master_r2.csv"
+    )
     backfill_images.add_argument("--progress", type=Path)
     backfill_images.add_argument("--dry-run", action="store_true")
 
     args = parser.parse_args()
+    if args.command == "discover":
+        from datascraper.sources.v1.yesstyle.discover import discover_yesstyle_urls
+
+        try:
+            discover_yesstyle_urls(
+                input_csv=args.input,
+                output_csv=args.output,
+                max_pages=args.max_pages,
+                max_depth=args.max_depth,
+                dataset_id=args.dataset_id,
+                wait_timeout=args.wait_timeout,
+                artifact_dir=args.output.parent / "apify",
+            )
+        except Exception as exc:
+            parser.exit(1, f"datascraper: error: {exc}\n")
+        return
+
+    if args.command == "compare":
+        from datascraper.pipeline.discovery import compare_with_catalog
+
+        try:
+            compare_with_catalog(
+                input_csv=args.input,
+                catalog_csv=args.catalog,
+                output_prefix=args.output_prefix,
+            )
+        except Exception as exc:
+            parser.exit(1, f"datascraper: error: {exc}\n")
+        return
+
     if args.command == "refresh":
         from datascraper.pipeline.refresh import refresh_prices
 

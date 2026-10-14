@@ -1,5 +1,9 @@
 # AGENTS.md
 
+## Personal preferences
+
+- Use the product name spelling **Clearup**.
+
 Local Python tool that scrapes skincare product data (YesStyle, Sephora) for [Clearup](https://www.clearup.skin) and hands it off as CSV. Solo-dev project; keep things simple.
 
 ## Current task: v2 data pipeline
@@ -18,10 +22,10 @@ The work plan is [01-data-pipeline.md](./01-data-pipeline.md). Read it before st
 - First-time browser install: `uv run playwright install chromium`.
 - Run commands from the repo root:
   ```bash
-  uv run datascraper scrape yesstyle --input inputs/yesstyle_input_v2.csv --output outputs/yesstyle_output.csv --workers 5 --delay 5
-  uv run datascraper scrape sephora --input inputs/sephora_input.csv --output outputs/sephora_output.csv --workers 4 --delay 8
-  uv run datascraper images ingest --input outputs/yesstyle_output.csv --output outputs/yesstyle_import.csv --dry-run
-  uv run datascraper backfill images --input outputs/master.csv --output outputs/master_r2.csv --dry-run
+  uv run datascraper scrape yesstyle --input inputs/legacy/yesstyle_products.csv --output outputs/runs/yesstyle_manual/products.csv --workers 5 --delay 5
+  uv run datascraper scrape sephora --input inputs/legacy/sephora_products_v2.csv --output outputs/runs/sephora_manual/products.csv --workers 4 --delay 8
+  uv run datascraper images ingest --input outputs/runs/yesstyle_manual/products.csv --output outputs/runs/yesstyle_manual/image_import.csv --dry-run
+  uv run datascraper backfill images --input outputs/catalog/master.csv --output outputs/catalog/master_r2.csv --dry-run
   uv run datascraper --help
   ```
 - There is **no test suite, linter, or CI** yet. Verify changes by running the relevant script on a small input (a few rows) and inspecting the output CSV. If you add tests, use `pytest` (add as a dev dependency) and keep them offline: use saved HTML fixtures, never live sites.
@@ -35,11 +39,11 @@ The work plan is [01-data-pipeline.md](./01-data-pipeline.md). Read it before st
 | `src/datascraper/sources/v1/<merchant>/`           | Full discovery sources: extractors, single-product scraper, CSV batch orchestration, and README.                                                         |
 | `src/datascraper/sources/v2/<merchant>/`           | Slim refresh sources; currently extracts merchant price only.                                                                                           |
 | `src/datascraper/models.py`                        | Shared `Product` type and single `OUTPUT_FIELDS` definition.                                                                                             |
-| `src/datascraper/cli.py`                           | `datascraper scrape`, `refresh prices`, `enrich skin-types`, `images ingest`, and `backfill images` command-line interface.                                |
-| `src/datascraper/pipeline/refresh.py`              | Read-only ClearUp listing refresh and four-column refresh CSV.                                                                                            |
+| `src/datascraper/cli.py`                           | `datascraper scrape`, `discover`, `compare`, `refresh prices`, `enrich skin-types`, `images ingest`, and `backfill images` command-line interface.             |
+| `src/datascraper/pipeline/refresh.py`              | Read-only Clearup listing refresh and four-column refresh CSV.                                                                                            |
 | `src/datascraper/pipeline/images.py`               | Image download, WebP conversion, R2 ingest, and resumable CSV transformation.                                                                            |
 | `src/datascraper/storage/`                         | PostgreSQL read access and Cloudflare R2 client using its S3-compatible API.                                                                              |
-| `inputs/`, `outputs/`                              | Data (gitignored). `outputs/master.csv` is the merged dataset; `migration.csv` is the Clearup import.                                                    |
+| `inputs/`, `outputs/`                              | Data (gitignored). Inputs contain maintained seeds, legacy inputs, and references. Outputs contain the catalog, refreshes, progress, and per-run artifacts. |
 | `docs/`, `extra/`                                  | Gitignored scratch notes and sample HTML. Not authoritative; don't commit to them.                                                                       |
 
 Layering: discovery CLI → v1 merchant batch orchestrator → v1 single-product scraper → extractors → `datascraper.taxonomy`; refresh CLI → refresh pipeline → v2 price scraper/extractor. Extractors don't navigate or do unrelated I/O.

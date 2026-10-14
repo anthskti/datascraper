@@ -27,11 +27,23 @@ uv sync
 Scrape a merchant from an input CSV:
 
 ```bash
-uv run datascraper scrape yesstyle --input inputs/yesstyle_input_v2.csv --output outputs/yesstyle_output.csv --workers 5 --delay 5
-uv run datascraper scrape sephora --input inputs/sephora_input.csv --output outputs/sephora_output.csv --workers 4 --delay 8
+uv run datascraper scrape yesstyle --input inputs/legacy/yesstyle_products.csv --output outputs/runs/yesstyle_manual/products.csv --workers 5 --delay 5
+uv run datascraper scrape sephora --input inputs/legacy/sephora_products_v2.csv --output outputs/runs/sephora_manual/products.csv --workers 4 --delay 8
 ```
 
 Use `uv run datascraper --help` or `uv run datascraper scrape --help` for options. `datascraper scrape` uses the full v1 sources; `datascraper refresh prices` uses the price-only v2 sources. The discovery output schema is in `datascraper.models`.
+
+## Discover YesStyle products from brand pages
+
+Create a seed CSV with `brand,listingUrl` columns. The bounded Apify crawl writes a separate `brand,url` CSV; inspect it before passing it to the local Playwright scraper. `--max-pages` applies to each brand URL. Set `APIFY_TOKEN` in the shell; the CLI does not load `.env` automatically. Compact run manifests are saved beside the URL CSV under `apify/`, with dataset IDs for replay. Full page content remains in Apify.
+
+```bash
+uv run datascraper discover yesstyle --input inputs/yesstyle/brand_pages.csv --output outputs/runs/yesstyle_skin1004/product_urls.csv --max-pages 300 --max-depth 3
+uv run datascraper scrape yesstyle --input outputs/runs/yesstyle_skin1004/product_urls.csv --output outputs/runs/yesstyle_skin1004/products.csv --workers 2 --delay 5
+uv run datascraper compare catalog --input outputs/runs/yesstyle_skin1004/products.csv --catalog outputs/catalog/master.csv --output-prefix outputs/runs/yesstyle_skin1004/comparison
+```
+
+The URL CSV is a visible checkpoint: inspect or edit it before scraping, and rerun the scraper independently. The crawl limit includes listing and product pages, so check the discovered/scraped row count against the brand listing. The comparison writes `_new.csv`, `_existing.csv`, and `_review.csv`; only `_new.csv` has the normal Clearup product import fields. Review the other two before importing, and make sure `outputs/catalog/master.csv` is current.
 
 ## Enrich product skin types locally
 
@@ -44,11 +56,11 @@ ollama pull gemma4:12b-mlx
 The local model infers skin types from the product name, category, and ingredients. Override the default with `--model` if needed. The input file is never modified, so compare the output against the original regex-based `skinType` values:
 
 ```bash
-uv run datascraper enrich skin-types --input outputs/master.csv --output outputs/master_skin_types_sample.csv --limit 5
-uv run datascraper enrich skin-types --input outputs/master.csv --output outputs/master_skin_types.csv
+uv run datascraper enrich skin-types --input outputs/catalog/master.csv --output outputs/catalog/master_skin_types_sample.csv --limit 5
+uv run datascraper enrich skin-types --input outputs/catalog/master.csv --output outputs/catalog/master_skin_types.csv
 ```
 
-Inference is restricted to `ALL_SKIN_TYPES`; insufficient evidence produces `N/A`. The model considers the overall product purpose and formula, does not infer suitability from a single ingredient or marketing phrase, and should omit uncertain skin types. Product name, category, and ingredients are sent as structured data; the model is instructed to return only a JSON label array. The result is validated locally against the allowed taxonomy. Rows marked `skinTypeSource=manual` or `inferred` are skipped on reruns. Legacy rows without provenance are inferred once, even when they already contain a scraped skin type. The output adds the internal `skinTypeSource` field; ClearUp must retain that field for manual edits and rerun-skipping to work end to end. This repository does not write to ClearUp.
+Inference is restricted to `ALL_SKIN_TYPES`; insufficient evidence produces `N/A`. The model considers the overall product purpose and formula, does not infer suitability from a single ingredient or marketing phrase, and should omit uncertain skin types. Product name, category, and ingredients are sent as structured data; the model is instructed to return only a JSON label array. The result is validated locally against the allowed taxonomy. Rows marked `skinTypeSource=manual` or `inferred` are skipped on reruns. Legacy rows without provenance are inferred once, even when they already contain a scraped skin type. The output adds the internal `skinTypeSource` field; Clearup must retain that field for manual edits and rerun-skipping to work end to end. This repository does not write to Clearup.
 
 For later runs, use the latest enriched/import-export CSV as `--input`; reusing the original source CSV (without `skinTypeSource`) will intentionally trigger inference again. Keep the original CSV separately to compare model results with the regex values.
 
@@ -59,7 +71,7 @@ The refresh command reads merchant listings from Clearup using a dedicated read-
 ```bash
 export CLEARUP_DATABASE_URL='postgresql://...session-pooler-connection...'
 export CLEARUP_DB_CA_CERT='/path/to/supabase-prod-ca.crt'
-uv run datascraper refresh prices --limit 5 --output outputs/price_refresh.csv
+uv run datascraper refresh prices --limit 5 --output outputs/refresh/price_refresh.csv
 ```
 
 Use the exact session-pooler connection details from Supabase and a role limited to `SELECT` on `products`, `product_merchants`, and `merchants`. The connection verifies TLS and the server certificate/hostname using the configured CA. If `.env` is used, source it in the shell before running the command. The CSV columns are `brand,name,price,merchant`; failed, unsupported, and duplicate brand/name/merchant listings are omitted and counted in the log, so a failed scrape cannot replace a stored price. YesStyle and Sephora are currently supported; Sephora may block automated requests.
@@ -71,8 +83,8 @@ Create an R2 bucket separately in Cloudflare, enable public access through a cus
 Convert a scraper CSV into an import CSV containing R2 URLs:
 
 ```bash
-uv run datascraper images ingest --input outputs/yesstyle_output.csv --output outputs/yesstyle_import.csv --dry-run
-uv run datascraper images ingest --input outputs/yesstyle_output.csv --output outputs/yesstyle_import.csv
+uv run datascraper images ingest --input outputs/runs/yesstyle_skin1004/products.csv --output outputs/runs/yesstyle_skin1004/image_import.csv --dry-run
+uv run datascraper images ingest --input outputs/runs/yesstyle_skin1004/products.csv --output outputs/runs/yesstyle_skin1004/image_import.csv
 ```
 
 The dry run lists planned object keys without downloading or uploading images and does not write the output CSV.
@@ -80,8 +92,8 @@ The dry run lists planned object keys without downloading or uploading images an
 Backfill the merged dataset (resumable; progress is stored under ignored `outputs/`):
 
 ```bash
-uv run datascraper backfill images --input outputs/master.csv --output outputs/master_r2.csv --dry-run
-uv run datascraper backfill images --input outputs/master.csv --output outputs/master_r2.csv
+uv run datascraper backfill images --input outputs/catalog/master.csv --output outputs/catalog/master_r2.csv --dry-run
+uv run datascraper backfill images --input outputs/catalog/master.csv --output outputs/catalog/master_r2.csv
 ```
 
 R2 product keys use a SHA-256 digest of the trimmed, lowercased `brand::name` identity, followed by the image position and source-URL digest. Scraper CSVs retain their original merchant image URLs; the derived import CSV contains R2 URLs and only includes successful rows with images. Unsuccessful and imageless rows are skipped so they cannot clear existing images. Ingest continues through the batch after an image error and logs `processed`, `skipped`, and `failed` row counts; if any eligible row fails, it does not write a new output CSV. Completed uploads are resumable on rerun.

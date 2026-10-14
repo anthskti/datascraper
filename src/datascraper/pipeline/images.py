@@ -24,7 +24,7 @@ from datascraper.storage.r2 import R2Config, R2Storage
 logger = logging.getLogger(__name__)
 
 _ROOT = Path(__file__).resolve().parents[3]
-_DEFAULT_PROGRESS = _ROOT / "outputs" / ".image_ingest_progress.jsonl"
+_DEFAULT_PROGRESS = _ROOT / "outputs" / "progress" / "image_ingest_progress.jsonl"
 _MAX_IMAGE_BYTES = 20 * 1024 * 1024
 _MAX_IMAGE_WIDTH = 800
 

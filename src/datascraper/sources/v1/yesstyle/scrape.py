@@ -1,16 +1,18 @@
 """
 Orchestrator for YesStyle product scraping.
 
-Input:  inputs/yesstyle_input.csv          (Brand, Name)
-Output: outputs/yesstyle_output.csv
+Input:  Brand,Name CSV or a brand,url product URL list
+Output: outputs/runs/yesstyle_manual/products.csv
 """
 
 import asyncio
 import csv
 import logging
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from datascraper.models import OUTPUT_FIELDS
+from datascraper.taxonomy import normalize_product_identity_text
 from datascraper.sources.v1.yesstyle.scraper import (
     get_first_product_link,
     scrape_yesstyle_product,
@@ -19,25 +21,66 @@ from datascraper.sources.v1.yesstyle.scraper import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-_ROOT = Path(__file__).resolve().parents[4]
-INPUT_CSV = _ROOT / "inputs" / "yesstyle_input.csv"
-OUTPUT_CSV = _ROOT / "outputs" / "yesstyle_output.csv"
+_ROOT = Path(__file__).resolve().parents[5]
+INPUT_CSV = _ROOT / "inputs" / "legacy" / "yesstyle_products.csv"
+OUTPUT_CSV = _ROOT / "outputs" / "runs" / "yesstyle_manual" / "products.csv"
 MAX_WORKERS = 5 # Conservative default for lower throttle risk on 100+ runs
 DELAY_BETWEEN_REQUESTS = 5 # Seconds reduces throttle risk
 MERCHANT = "Yesstyle"
 
 def _product_key(brand: str, product_name: str) -> str:
-    return f"{brand.strip().lower()}::{product_name.strip().lower()}"
+    return f"{normalize_product_identity_text(brand)}::{normalize_product_identity_text(product_name)}"
+
+
+def _read_input_products(input_csv: Path) -> list[dict[str, str]]:
+    with input_csv.open(newline="", encoding="utf-8-sig") as handle:
+        reader = csv.DictReader(handle)
+        if not reader.fieldnames:
+            raise ValueError("Input CSV must have a header row")
+        headers = {header.strip().casefold(): header for header in reader.fieldnames}
+        brand_col = headers.get("brand")
+        name_col = headers.get("name")
+        url_col = headers.get("url")
+        if not url_col and not (brand_col and name_col):
+            raise ValueError("Input CSV needs a URL column or Brand,Name columns")
+
+        products: list[dict[str, str]] = []
+        for row in reader:
+            products.append(
+                {
+                    "brand": (row.get(brand_col) or "").strip() if brand_col else "",
+                    "product_name": (row.get(name_col) or "").strip() if name_col else "",
+                    "url": (row.get(url_col) or "").strip() if url_col else "",
+                }
+            )
+    products = [
+        product
+        for product in products
+        if product["url"] or (product["brand"] and product["product_name"])
+    ]
+    for product in products:
+        if not product["url"]:
+            continue
+        parts = urlsplit(product["url"])
+        host = (parts.hostname or "").casefold()
+        if (
+            parts.scheme.casefold() not in {"http", "https"}
+            or not (host == "yesstyle.com" or host.endswith(".yesstyle.com"))
+            or "/info.html/pid." not in parts.path.casefold()
+        ):
+            raise ValueError(f"Not a YesStyle product URL: {product['url']}")
+    return products
 
 # ── Semaphore-limited scrape task ────
 async def scrape_one(input_data: dict, semaphore: asyncio.Semaphore, delay_seconds: float) -> dict:
     async with semaphore:
-        brand = input_data["brand"]
-        product_name = input_data["product_name"]
-        search_query = f"{brand} {product_name}"
+        brand = input_data.get("brand", "")
+        product_name = input_data.get("product_name", "")
+        direct_url = input_data.get("url", "")
+        search_query = f"{brand} {product_name}".strip()
         result = {
-            "name":         product_name,
-            "brand":        brand,
+            "name":         product_name or "N/A",
+            "brand":        brand or "N/A",
             "category":     "N/A",
             "labels":       "",
             "skinType":     "N/A",
@@ -55,13 +98,34 @@ async def scrape_one(input_data: dict, semaphore: asyncio.Semaphore, delay_secon
         }
 
         try:
-            url = await get_first_product_link(search_query)
+            url = direct_url or await get_first_product_link(search_query)
             if not url:
                 logger.warning("[%s] No product link found", search_query)
                 return result
             
             result["url"] = url
-            data = await scrape_yesstyle_product(url, product_name=product_name)
+            data = await scrape_yesstyle_product(url, product_name=product_name or None)
+            scraped_brand = str(data.get("brand", "")).strip()
+            scraped_name = str(data.get("name", "")).strip()
+            if direct_url:
+                if (
+                    not scraped_brand
+                    or scraped_brand == "N/A"
+                    or not scraped_name
+                    or scraped_name == "N/A"
+                ):
+                    logger.warning("[%s] Product page is missing its brand or name", url)
+                    return result
+                if brand and _product_key(brand, "") != _product_key(scraped_brand, ""):
+                    logger.warning(
+                        "[%s] Page brand %s did not match seed brand %s",
+                        url,
+                        scraped_brand,
+                        brand,
+                    )
+                    return result
+                result["brand"] = scraped_brand
+                result["name"] = scraped_name
 
             result.update({
                 "category":      data.get("category", "N/A"),
@@ -79,9 +143,9 @@ async def scrape_one(input_data: dict, semaphore: asyncio.Semaphore, delay_secon
             })
 
         except Exception as e:
-            logger.error("[%s] Scrape failed: %s", product_name, e)
-        
-        await asyncio.sleep(delay_seconds)
+            logger.error("[%s] Scrape failed: %s", direct_url or search_query, e)
+        finally:
+            await asyncio.sleep(delay_seconds)
         return result
     
 # ── Main pipeline ────────────────────
@@ -93,38 +157,40 @@ async def run_pipeline(
 ):
     if not input_csv.exists():
         logger.error(
-            "Input file not found: %s. Create it with columns: Brand,Name",
+            "Input file not found: %s. Use Brand,Name or a URL column",
             input_csv,
         )
         return
 
-    with open(input_csv, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        products = [
-            {
-                "brand": row["Brand"].strip(), 
-                "product_name": row["Name"].strip()
-            } 
-            for row in reader
-        ]
+    try:
+        products = _read_input_products(input_csv)
+    except ValueError as exc:
+        logger.error("Invalid input CSV: %s", exc)
+        return
 
     logger.info("Loaded %d products from %s", len(products), input_csv)
 
-    scraped = set() # Used so it doesn't double scrape successful rows
+    scraped = set() # Successful names or URLs are skipped on resume.
     output_csv.parent.mkdir(parents=True, exist_ok=True)
     if output_csv.exists():
         with open(output_csv, newline="", encoding="utf-8") as f:
             reader = csv.DictReader(f)
-            scraped = {
-                _product_key(row.get("brand", ""), row.get("name", ""))
-                for row in reader
-                if row.get("status") == "success" and row.get("brand") and row.get("name")
-            }
+            for row in reader:
+                if row.get("status") != "success":
+                    continue
+                if row.get("url") and row.get("url") != "N/A":
+                    scraped.add(f"url::{row['url'].strip().casefold()}")
+                elif row.get("brand") and row.get("name"):
+                    scraped.add(_product_key(row["brand"], row["name"]))
         logger.info("Resuming — %d already scraped, skipping them...", len(scraped))
 
     remaining = [
         p for p in products
-        if _product_key(p["brand"], p["product_name"]) not in scraped
+        if (
+            f"url::{p['url'].casefold()}" not in scraped
+            if p["url"]
+            else _product_key(p["brand"], p["product_name"]) not in scraped
+        )
     ]
     logger.info("%d products left to scrape", len(remaining))
     if not remaining:

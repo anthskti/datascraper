@@ -111,6 +111,14 @@ def extract_product_name(soup: BeautifulSoup) -> str:
     return ""
 
 
+def extract_product_brand(soup: BeautifulSoup) -> str:
+    h1 = soup.find("h1")
+    if not h1:
+        return ""
+    brand_link = h1.find("a", class_="notranslate")
+    return brand_link.get_text(" ", strip=True) if brand_link else ""
+
+
 def extract_images(soup: BeautifulSoup) -> list:
     images = []
     main = soup.find("img", {"loading": "eager", "fetchpriority": "high"})

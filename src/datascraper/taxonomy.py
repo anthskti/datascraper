@@ -214,6 +214,16 @@ def _normalize_lookup_text(*parts: str) -> str:
     return " ".join(p.strip().lower() for p in parts if p and p.strip())
 
 
+def normalize_product_identity_text(value: str | None) -> str:
+    """Normalize a brand or product name for conservative catalog matching."""
+    return re.sub(r"[\W_]+", "", (value or "").casefold())
+
+
+def normalize_product_capacity(value: str | None) -> str:
+    """Normalize spacing and case without converting between measurement units."""
+    return re.sub(r"\s+", "", (value or "").casefold())
+
+
 # Helper function to check if any keyword is in the text.
 def _text_has_any(text: str, keywords: tuple[str, ...]) -> bool: # Since our tuple can contain any number of strings, [str, ...]
     return any(keyword in text for keyword in keywords)

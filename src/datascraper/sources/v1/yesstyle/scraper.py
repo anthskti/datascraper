@@ -24,6 +24,7 @@ from datascraper.sources.v1.yesstyle.extractors import (
     extract_ingredients,
     extract_marketing_text,
     extract_product_name,
+    extract_product_brand,
     extract_rating,
 )
 
@@ -146,6 +147,8 @@ async def scrape_yesstyle_product(url: str, product_name: str | None = None) -> 
 
     soup = BeautifulSoup(content, "html.parser")
     data = {
+        "name": "N/A",
+        "brand": "N/A",
         "price": "N/A",
         "rating": "N/A",
         "images": [],
@@ -167,7 +170,10 @@ async def scrape_yesstyle_product(url: str, product_name: str | None = None) -> 
     data["how_to_use"] = extract_how_to_use(soup)
     data["ingredients"] = extract_ingredients(soup)
 
-    resolved_name = (product_name or "").strip() or extract_product_name(soup)
+    page_name = extract_product_name(soup)
+    resolved_name = (product_name or "").strip() or page_name
+    data["name"] = page_name or "N/A"
+    data["brand"] = extract_product_brand(soup) or "N/A"
     marketing_text = extract_marketing_text(soup)
 
     data["category"] = extract_category(soup, product_name=resolved_name)
