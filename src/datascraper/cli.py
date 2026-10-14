@@ -8,6 +8,25 @@ from pathlib import Path
 logging.basicConfig(level=logging.INFO)
 
 
+def _configure_run_logging(log_path: Path, log_level: str) -> None:
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    root_logger = logging.getLogger()
+    root_logger.setLevel(getattr(logging, log_level.upper()))
+
+    resolved_path = str(log_path.resolve())
+    for handler in root_logger.handlers:
+        if isinstance(handler, logging.FileHandler) and handler.baseFilename == resolved_path:
+            handler.setLevel(getattr(logging, log_level.upper()))
+            return
+
+    file_handler = logging.FileHandler(log_path, mode="a", encoding="utf-8")
+    file_handler.setLevel(getattr(logging, log_level.upper()))
+    file_handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    )
+    root_logger.addHandler(file_handler)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="datascraper")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -20,13 +39,15 @@ def main() -> None:
         merchant_parser.add_argument("--output", type=Path)
         merchant_parser.add_argument("--workers", type=int)
         merchant_parser.add_argument("--delay", type=float)
+        if name == "yesstyle":
+            merchant_parser.add_argument(
+                "--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO"
+            )
 
-    discover = commands.add_parser(
-        "discover", help="Discover and scrape products from retailer listings"
-    )
+    discover = commands.add_parser("discover", help="Discover product URLs from retailer listings")
     discover_commands = discover.add_subparsers(dest="discover_source", required=True)
     yesstyle_discover = discover_commands.add_parser(
-        "yesstyle", help="Discover and scrape YesStyle products from brand listing pages"
+        "yesstyle", help="Discover YesStyle product URLs from brand listing pages"
     )
     yesstyle_discover.add_argument("--input", type=Path, required=True)
     yesstyle_discover.add_argument("--output", type=Path, required=True, help="brand,url CSV")
@@ -34,6 +55,9 @@ def main() -> None:
     yesstyle_discover.add_argument("--max-depth", type=int, default=3)
     yesstyle_discover.add_argument("--dataset-id", help="Reuse a saved Apify dataset (one brand row only)")
     yesstyle_discover.add_argument("--wait-timeout", type=float, default=3600)
+    yesstyle_discover.add_argument(
+        "--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO"
+    )
 
     compare = commands.add_parser("compare", help="Compare scraped products with a catalog CSV")
     compare_commands = compare.add_subparsers(dest="compare_type", required=True)
@@ -87,6 +111,12 @@ def main() -> None:
         from datascraper.sources.v1.yesstyle.discover import discover_yesstyle_urls
 
         try:
+            _configure_run_logging(args.output.parent / "run.log", args.log_level)
+            logging.getLogger(__name__).info(
+                "Starting YesStyle URL discovery: input=%s output=%s",
+                args.input,
+                args.output,
+            )
             discover_yesstyle_urls(
                 input_csv=args.input,
                 output_csv=args.output,
@@ -97,6 +127,7 @@ def main() -> None:
                 artifact_dir=args.output.parent / "apify",
             )
         except Exception as exc:
+            logging.getLogger(__name__).exception("YesStyle URL discovery failed")
             parser.exit(1, f"datascraper: error: {exc}\n")
         return
 
@@ -173,6 +204,15 @@ def main() -> None:
             MAX_WORKERS,
             OUTPUT_CSV,
             run_pipeline,
+        )
+
+    if args.merchant == "yesstyle":
+        output_path = args.output or OUTPUT_CSV
+        _configure_run_logging(output_path.parent / "run.log", args.log_level)
+        logging.getLogger(__name__).info(
+            "Starting YesStyle product scrape: input=%s output=%s",
+            args.input or INPUT_CSV,
+            output_path,
         )
 
     asyncio.run(

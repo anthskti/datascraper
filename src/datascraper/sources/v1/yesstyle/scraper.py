@@ -56,7 +56,14 @@ VARIANT_DIALOG_SELECTOR = (
 async def _goto_with_retries(page, url: str, ready_selector: str | None = None) -> bool:
     for attempt in range(1, NAVIGATION_RETRIES + 1):
         try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=NAVIGATION_TIMEOUT_MS)
+            response = await page.goto(url, wait_until="domcontentloaded", timeout=NAVIGATION_TIMEOUT_MS)
+            logger.debug(
+                "Navigation response: url=%s status=%s attempt=%d/%d",
+                url,
+                response.status if response else "no response",
+                attempt,
+                NAVIGATION_RETRIES,
+            )
             if ready_selector:
                 await page.wait_for_selector(ready_selector, timeout=READY_TIMEOUT_MS)
             return True
@@ -119,9 +126,12 @@ async def _browser_page():
 
 async def get_first_product_link(search_query: str) -> str | None:
     search_url = f"https://www.yesstyle.com/en/list.html?q={quote(search_query)}"
+    logger.info("Searching YesStyle for product: %s", search_query)
 
     async with _browser_page() as page:
-        await _goto_with_retries(page, search_url, ready_selector=SELECTORS["product_card"])
+        ready = await _goto_with_retries(page, search_url, ready_selector=SELECTORS["product_card"])
+        if not ready:
+            logger.warning("Search results may be partially loaded: %s", search_url)
         content = await page.content()
 
     soup = BeautifulSoup(content, "html.parser")
@@ -138,6 +148,7 @@ async def get_first_product_link(search_query: str) -> str | None:
 
 
 async def scrape_yesstyle_product(url: str, product_name: str | None = None) -> dict:
+    logger.info("Loading YesStyle product page: %s", url)
     async with _browser_page() as page:
         ready = await _goto_with_retries(page, url, ready_selector=PDP_READY_SELECTOR)
         if not ready:
@@ -186,6 +197,14 @@ async def scrape_yesstyle_product(url: str, product_name: str | None = None) -> 
     data["skinType"] = extract_skintype(soup)
     data["country"] = extract_country(soup)
     data["capacity"] = extract_capacity(soup, page_url=url)
+
+    logger.info(
+        "Extracted YesStyle product fields: url=%s name_found=%s brand_found=%s price_found=%s",
+        url,
+        data["name"] != "N/A",
+        data["brand"] != "N/A",
+        data["price"] != "N/A",
+    )
 
     return data
 

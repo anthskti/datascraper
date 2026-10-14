@@ -98,6 +98,10 @@ async def scrape_one(input_data: dict, semaphore: asyncio.Semaphore, delay_secon
         }
 
         try:
+            logger.info(
+                "Starting product scrape: target=%s",
+                direct_url or search_query,
+            )
             url = direct_url or await get_first_product_link(search_query)
             if not url:
                 logger.warning("[%s] No product link found", search_query)
@@ -141,9 +145,15 @@ async def scrape_one(input_data: dict, semaphore: asyncio.Semaphore, delay_secon
                 "averageRating": data.get("rating", "N/A"),
                 "status":        "success"
             })
+            logger.info(
+                "Product scrape succeeded: name=%s brand=%s url=%s",
+                result["name"],
+                result["brand"],
+                url,
+            )
 
         except Exception as e:
-            logger.error("[%s] Scrape failed: %s", direct_url or search_query, e)
+            logger.exception("[%s] Scrape failed: %s", direct_url or search_query, e)
         finally:
             await asyncio.sleep(delay_seconds)
         return result
@@ -197,6 +207,12 @@ async def run_pipeline(
         logger.info("Nothing to scrape. Exiting.")
         return
 
+    logger.info(
+        "Starting YesStyle scrape with workers=%d delay_seconds=%.2f",
+        max_workers,
+        delay_between_requests,
+    )
+
     # Concurrent Running Limit
     semaphore = asyncio.Semaphore(max_workers)
     tasks = [scrape_one(prod, semaphore, delay_between_requests) for prod in remaining]
@@ -210,11 +226,17 @@ async def run_pipeline(
             writer.writeheader()
 
         completed = 0
+        success_count = 0
+        failed_count = 0
         for coro in asyncio.as_completed(tasks):
             row = await coro
             writer.writerow(row)
             f.flush()                   # write to disk immediately, don't buffer
             completed += 1
+            if row["status"] == "success":
+                success_count += 1
+            else:
+                failed_count += 1
             logger.info(
                 "Progress: %d/%d — [%s] %s",
                 completed, len(remaining),
@@ -222,4 +244,10 @@ async def run_pipeline(
                 row["name"]
             )
 
-    logger.info("Done. Output saved to %s", output_csv)
+    logger.info(
+        "Done. processed=%d succeeded=%d failed=%d output=%s",
+        completed,
+        success_count,
+        failed_count,
+        output_csv,
+    )

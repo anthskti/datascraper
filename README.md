@@ -43,6 +43,8 @@ uv run datascraper scrape yesstyle --input outputs/runs/yesstyle_skin1004/produc
 uv run datascraper compare catalog --input outputs/runs/yesstyle_skin1004/products.csv --catalog outputs/catalog/master.csv --output-prefix outputs/runs/yesstyle_skin1004/comparison
 ```
 
+Both YesStyle commands write terminal logs and append to `run.log` beside their output. `INFO` is the default; add `--log-level DEBUG` to either command for per-page and URL filtering details. The product scrape logs navigation status and whether key fields were found, without logging ingredients or full page content.
+
 The URL CSV is a visible checkpoint: inspect or edit it before scraping, and rerun the scraper independently. The crawl limit includes listing and product pages, so check the discovered/scraped row count against the brand listing. The comparison writes `_new.csv`, `_existing.csv`, and `_review.csv`; only `_new.csv` has the normal Clearup product import fields. Review the other two before importing, and make sure `outputs/catalog/master.csv` is current.
 
 ## Enrich product skin types locally

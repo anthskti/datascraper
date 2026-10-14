@@ -143,10 +143,15 @@ def _run_actor(
     run_id = run.get("id")
     if not run_id:
         raise RuntimeError("Apify did not return a run ID")
+    logger.info("Apify run started: run_id=%s", run_id)
 
     deadline = time.monotonic() + wait_timeout
+    last_status = None
     while True:
         status = run.get("status")
+        if status != last_status:
+            logger.info("Apify run %s status: %s", run_id, status)
+            last_status = status
         if status in {"SUCCEEDED", "FAILED", "ABORTED", "TIMED-OUT"}:
             break
         if time.monotonic() >= deadline:
@@ -163,6 +168,7 @@ def _run_actor(
     dataset_id = run.get("defaultDatasetId")
     if not dataset_id:
         raise RuntimeError(f"Apify run {run_id} has no output dataset")
+    logger.info("Apify run %s succeeded; dataset_id=%s", run_id, dataset_id)
     return run_id, dataset_id
 
 
@@ -178,6 +184,12 @@ def _read_dataset(dataset_id: str, token: str) -> list[dict]:
         )
         if not isinstance(batch, list):
             raise RuntimeError(f"Apify dataset {dataset_id} did not return a JSON array")
+        logger.debug(
+            "Read Apify dataset batch: dataset_id=%s offset=%d count=%d",
+            dataset_id,
+            offset,
+            len(batch),
+        )
         items.extend(item for item in batch if isinstance(item, dict))
         if len(batch) < DATASET_PAGE_SIZE:
             return items
@@ -221,8 +233,16 @@ def discover_yesstyle_urls(
         if dataset_id:
             run_id = "reused"
             current_dataset_id = dataset_id
+            logger.info("Reusing Apify dataset %s for %s", dataset_id, brand)
         else:
-            logger.info("Starting Apify crawl %d/%d for %s", index, len(seeds), brand)
+            logger.info(
+                "Starting Apify crawl %d/%d for %s (max_pages=%d, max_depth=%d)",
+                index,
+                len(seeds),
+                brand,
+                max_pages,
+                max_depth,
+            )
             run_id, current_dataset_id = _run_actor(
                 seed["listing_url"],
                 token=token,
@@ -246,22 +266,46 @@ def discover_yesstyle_urls(
             ),
             encoding="utf-8",
         )
-        logger.info("Read %d Apify pages for %s", len(items), brand)
+        logger.info(
+            "Read %d Apify pages for %s (run_id=%s, dataset_id=%s)",
+            len(items),
+            brand,
+            run_id,
+            current_dataset_id,
+        )
 
         brand_urls: set[str] = set()
+        missing_url_count = 0
+        non_product_count = 0
         for item in items:
             page_url = item.get("url") or item.get("loadedUrl")
             if not isinstance(page_url, str):
+                missing_url_count += 1
+                logger.debug("Skipping Apify item without a URL for %s", brand)
                 continue
             canonical_url = _canonical_product_url(page_url)
             if canonical_url:
                 brand_urls.add(canonical_url)
+                logger.debug("Accepted product URL: %s", canonical_url)
+            else:
+                non_product_count += 1
+                logger.debug("Skipping non-product URL: %s", page_url)
+
+        logger.info(
+            "Classified Apify items for %s: pages=%d product_urls=%d missing_url=%d non_product=%d",
+            brand,
+            len(items),
+            len(brand_urls),
+            missing_url_count,
+            non_product_count,
+        )
 
         if not brand_urls:
             logger.warning("No YesStyle product URLs found for %s", brand)
         for url in sorted(brand_urls):
             key = url.casefold()
             if key in seen:
+                logger.debug("Skipping duplicate product URL across brands: %s", url)
                 continue
             seen.add(key)
             output_rows.append({"brand": brand, "url": url})

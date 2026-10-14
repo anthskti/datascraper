@@ -20,4 +20,6 @@ uv run datascraper compare catalog --input outputs/runs/yesstyle_skin1004/produc
 
 `--max-pages` applies per brand and counts both listing and product pages. Set `APIFY_TOKEN` in the shell. Compact Apify manifests are saved beside the URL CSV under `apify/`; full page content stays in Apify. Pass `--dataset-id` to replay a dataset for a single brand seed. Inspect the URL CSV before scraping.
 
+The discovery and product scrape commands log progress to the terminal and append to `run.log` beside each output CSV. Use `--log-level DEBUG` for Apify dataset page counts, URL filtering decisions, and additional Playwright navigation details. Default `INFO` logs run status and summary counts. Logs do not include the Apify token, ingredients, or full page content.
+
 The comparison writes new products in the standard Clearup CSV schema. Existing and uncertain matches go to separate CSVs with a reason and candidate details. Clearup matching uses brand and name, so inspect capacity differences and uncertain names before import.
