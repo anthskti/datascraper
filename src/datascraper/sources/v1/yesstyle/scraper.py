@@ -2,27 +2,21 @@
 YesStyle product scraper — Playwright fetch + BeautifulSoup parse.
 
 Module layout:
-  yesstyle_scrapper.py   — browser navigation and scrape orchestration
-  yesstyle_extractors.py — DOM field extraction (price, ingredients, marketing, …)
-  product_taxonomy.py    — category, labels, skinType rules
+  scraper.py   — browser navigation and scrape orchestration
+  extractors.py — DOM field extraction (price, ingredients, marketing, …)
+  taxonomy.py    — category, labels, skinType rules
 """
 
 import asyncio
 import logging
-import sys
 from contextlib import asynccontextmanager
-from pathlib import Path
 from urllib.parse import quote
 
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 
-_ROOT = Path(__file__).resolve().parent.parent
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
-
-from product_taxonomy import extract_category, extract_labels, extract_skintype
-from yesstyle_extractors import (
+from datascraper.taxonomy import extract_category, extract_labels, extract_skintype
+from datascraper.sources.v1.yesstyle.extractors import (
     extract_capacity,
     extract_country,
     extract_how_to_use,
@@ -30,6 +24,7 @@ from yesstyle_extractors import (
     extract_ingredients,
     extract_marketing_text,
     extract_product_name,
+    extract_product_brand,
     extract_rating,
 )
 
@@ -61,7 +56,14 @@ VARIANT_DIALOG_SELECTOR = (
 async def _goto_with_retries(page, url: str, ready_selector: str | None = None) -> bool:
     for attempt in range(1, NAVIGATION_RETRIES + 1):
         try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=NAVIGATION_TIMEOUT_MS)
+            response = await page.goto(url, wait_until="domcontentloaded", timeout=NAVIGATION_TIMEOUT_MS)
+            logger.debug(
+                "Navigation response: url=%s status=%s attempt=%d/%d",
+                url,
+                response.status if response else "no response",
+                attempt,
+                NAVIGATION_RETRIES,
+            )
             if ready_selector:
                 await page.wait_for_selector(ready_selector, timeout=READY_TIMEOUT_MS)
             return True
@@ -124,9 +126,12 @@ async def _browser_page():
 
 async def get_first_product_link(search_query: str) -> str | None:
     search_url = f"https://www.yesstyle.com/en/list.html?q={quote(search_query)}"
+    logger.info("Searching YesStyle for product: %s", search_query)
 
     async with _browser_page() as page:
-        await _goto_with_retries(page, search_url, ready_selector=SELECTORS["product_card"])
+        ready = await _goto_with_retries(page, search_url, ready_selector=SELECTORS["product_card"])
+        if not ready:
+            logger.warning("Search results may be partially loaded: %s", search_url)
         content = await page.content()
 
     soup = BeautifulSoup(content, "html.parser")
@@ -143,6 +148,7 @@ async def get_first_product_link(search_query: str) -> str | None:
 
 
 async def scrape_yesstyle_product(url: str, product_name: str | None = None) -> dict:
+    logger.info("Loading YesStyle product page: %s", url)
     async with _browser_page() as page:
         ready = await _goto_with_retries(page, url, ready_selector=PDP_READY_SELECTOR)
         if not ready:
@@ -152,6 +158,8 @@ async def scrape_yesstyle_product(url: str, product_name: str | None = None) -> 
 
     soup = BeautifulSoup(content, "html.parser")
     data = {
+        "name": "N/A",
+        "brand": "N/A",
         "price": "N/A",
         "rating": "N/A",
         "images": [],
@@ -173,7 +181,10 @@ async def scrape_yesstyle_product(url: str, product_name: str | None = None) -> 
     data["how_to_use"] = extract_how_to_use(soup)
     data["ingredients"] = extract_ingredients(soup)
 
-    resolved_name = (product_name or "").strip() or extract_product_name(soup)
+    page_name = extract_product_name(soup)
+    resolved_name = (product_name or "").strip() or page_name
+    data["name"] = page_name or "N/A"
+    data["brand"] = extract_product_brand(soup) or "N/A"
     marketing_text = extract_marketing_text(soup)
 
     data["category"] = extract_category(soup, product_name=resolved_name)
@@ -186,6 +197,14 @@ async def scrape_yesstyle_product(url: str, product_name: str | None = None) -> 
     data["skinType"] = extract_skintype(soup)
     data["country"] = extract_country(soup)
     data["capacity"] = extract_capacity(soup, page_url=url)
+
+    logger.info(
+        "Extracted YesStyle product fields: url=%s name_found=%s brand_found=%s price_found=%s",
+        url,
+        data["name"] != "N/A",
+        data["brand"] != "N/A",
+        data["price"] != "N/A",
+    )
 
     return data
 

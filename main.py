@@ -1,5 +1,5 @@
 def main():
-    print("Hello from datascrape!")
+    print("Hi, Clearup Exclusive Datascraper")
 
 
 if __name__ == "__main__":

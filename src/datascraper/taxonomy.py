@@ -1,19 +1,13 @@
 """
 Category, label, and skin-type rules for Clearup product taxonomy.
-Pure rules + soup-backed resolvers; DOM helpers live in yesstyle_extractors.
+Pure rules + soup-backed resolvers; DOM helpers live in the v1 YesStyle extractors.
 """
 
 import re
-import sys
-from pathlib import Path
 
 from bs4 import BeautifulSoup
 
-_YESSTYLE = Path(__file__).resolve().parent / "yesstyle"
-if str(_YESSTYLE) not in sys.path:
-    sys.path.insert(0, str(_YESSTYLE))
-
-from yesstyle_extractors import (
+from datascraper.sources.v1.yesstyle.extractors import (
     extract_product_info_map,
     extract_product_name,
     marketing_search_roots,
@@ -218,6 +212,16 @@ CHEMICAL_FILTER_MARKERS = (
 )
 def _normalize_lookup_text(*parts: str) -> str:
     return " ".join(p.strip().lower() for p in parts if p and p.strip())
+
+
+def normalize_product_identity_text(value: str | None) -> str:
+    """Normalize a brand or product name for conservative catalog matching."""
+    return re.sub(r"[\W_]+", "", (value or "").casefold())
+
+
+def normalize_product_capacity(value: str | None) -> str:
+    """Normalize spacing and case without converting between measurement units."""
+    return re.sub(r"\s+", "", (value or "").casefold())
 
 
 # Helper function to check if any keyword is in the text.

@@ -1,20 +1,14 @@
 """
 BeautifulSoup extractors for Sephora product detail pages.
-DOM / HTML parsing only — category/label/skin-type rules live in product_taxonomy.
+DOM / HTML parsing only — category/label/skin-type rules live in datascraper.taxonomy.
 """
 
 import json
 import re
 import logging
-import sys
-from pathlib import Path
 from bs4 import BeautifulSoup, NavigableString
 
-_ROOT = Path(__file__).resolve().parent.parent
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
-
-from product_taxonomy import (
+from datascraper.taxonomy import (
     ALL_SKIN_TYPES,
     _extract_category_from_name,
     _extract_skin_types_from_text,
