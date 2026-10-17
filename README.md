@@ -1,5 +1,7 @@
 # Product Data Scraper for Clearup
 
+Quick command reference: [CHEATSHEET.md](CHEATSHEET.md).
+
 This repository is a compliment to [Clearup.skin](https://www.clearup.skin)([repo](https://github.com/anthskti/Clearup)).
 
 Currently focuses on these retail stores:
